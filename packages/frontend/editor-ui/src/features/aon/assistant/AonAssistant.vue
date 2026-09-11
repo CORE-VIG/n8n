@@ -107,9 +107,16 @@ const openWorkflow = async () => {
 	min-height: 0;
 }
 /* The chat component draws its own 65px header naming n8n's assistant;
-   this window has a header of its own, so that one is not shown. The
-   first child of the component's root is that header. */
+   this window has a header of its own, so that one is collapsed. Collapsed,
+   not removed: the component's root is a grid of three rows (auto 1fr auto)
+   and a removed first child would shift the messages into the auto row and
+   hand the input the 1fr — which is exactly what happened the first time. */
 .chat > :first-child {
-	display: none;
+	height: 0;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	visibility: hidden;
 }
 </style>
