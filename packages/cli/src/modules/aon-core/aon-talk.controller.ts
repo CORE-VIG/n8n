@@ -1,5 +1,5 @@
 import { AuthenticatedRequest } from '@n8n/db';
-import { Body, Get, Post, RestController } from '@n8n/decorators';
+import { Get, Post, RestController } from '@n8n/decorators';
 import type { Response } from 'express';
 import { z } from 'zod';
 
@@ -27,8 +27,10 @@ export class AonTalkController {
 	}
 
 	@Post('/talk', { ipRateLimit: { limit: 60 } })
-	async talkTurn(req: AuthenticatedRequest, res: FlushableResponse, @Body payload: unknown) {
-		const parsed = talkBody.safeParse(payload);
+	async talkTurn(req: AuthenticatedRequest, res: FlushableResponse) {
+		// `@Body` only injects for a Zod-class DTO; a plain type is injected as
+		// nothing at all. The body is read and validated here instead.
+		const parsed = talkBody.safeParse(req.body);
 		if (!parsed.success) {
 			res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join('; ') });
 			return;

@@ -99,7 +99,9 @@ export class AonTalkService {
 		// No API key reaches the child on purpose: it authenticates as the
 		// subscription seat from its own home, exactly as the old daemon did.
 		return {
-			HOME: this.config.aon.claudeHome,
+			// claudeHome is the `.claude` directory; the CLI wants HOME to be its
+			// parent and finds `.claude/` and `.claude.json` under it itself.
+			HOME: path.dirname(this.config.aon.claudeHome),
 			PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
 			LANG: process.env.LANG ?? 'C.UTF-8',
 			DISABLE_AUTOUPDATER: '1',
@@ -139,7 +141,7 @@ export class AonTalkService {
 			let child: ChildProcess;
 			try {
 				child = spawn(claudeBin, this.argv(text, mcpConfig, session.claudeSessionId), {
-					cwd: claudeHome,
+					cwd: path.dirname(claudeHome),
 					env: this.childEnv(),
 					stdio: ['ignore', 'pipe', 'pipe'],
 				});

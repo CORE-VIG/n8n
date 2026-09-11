@@ -54,7 +54,7 @@ const openWorkflow = async () => {
 				@message="onMessage"
 			/>
 		</div>
-		<div v-else :class="$style.button">
+		<div v-else :class="$style.button" data-test-id="aon-assistant-button">
 			<N8nAskAssistantButton :unread-count="store.unread" @click="store.open()" />
 		</div>
 	</div>
