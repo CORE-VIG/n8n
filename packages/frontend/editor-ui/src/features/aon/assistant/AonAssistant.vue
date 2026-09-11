@@ -106,4 +106,10 @@ const openWorkflow = async () => {
 	flex: 1;
 	min-height: 0;
 }
+/* The chat component draws its own 65px header naming n8n's assistant;
+   this window has a header of its own, so that one is not shown. The
+   first child of the component's root is that header. */
+.chat > :first-child {
+	display: none;
+}
 </style>

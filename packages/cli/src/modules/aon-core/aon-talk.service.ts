@@ -66,7 +66,12 @@ export class AonTalkService {
 
 	/** The MCP config the child reads: this instance, the owner's own key. */
 	private async writeMcpConfig(user: User): Promise<string> {
-		const key = await this.mcpApiKeys.getOrCreateApiKey(user);
+		// getOrCreateApiKey REDACTS an existing key — it is written for a
+		// settings page, not for a client. The raw key is read unredacted, and
+		// only minted when there is none.
+		const key =
+			(await this.mcpApiKeys.findServerApiKeyForUser(user, { redact: false })) ??
+			(await this.mcpApiKeys.createMcpServerApiKey(user));
 		const file = path.join(this.config.aon.claudeHome, `aon-mcp-${user.id}.json`);
 		const body = {
 			mcpServers: {
