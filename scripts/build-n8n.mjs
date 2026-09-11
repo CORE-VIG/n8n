@@ -222,7 +222,10 @@ try {
 		for (const file of pnpmDeployFiles) await fs.remove(path.join(dir, file));
 	};
 
-	await $`cd ${config.rootDir} && NODE_ENV=production DOCKER_BUILD=true pnpm --filter=n8n ${deployFlags} deploy --no-optional ./compiled`;
+	// Aon: the trailing slash is deliberate. A host hygiene job kills any process whose
+	// command line carries `./` + 6-8 alphanumerics + a space or the end (a miner
+	// dropper signature); `./compiled` matched it and the deploy died mid-copy.
+	await $`cd ${config.rootDir} && NODE_ENV=production DOCKER_BUILD=true pnpm --filter=n8n ${deployFlags} deploy --no-optional ./compiled/`;
 	await removePnpmDeployFiles(config.compiledAppDir);
 
 	// Strip test/example/benchmark dirs shipped inside production deps that lack a
