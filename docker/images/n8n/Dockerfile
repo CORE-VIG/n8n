@@ -19,7 +19,10 @@ COPY ./compiled/node_modules/.pnpm/isolated-vm@*/node_modules/isolated-vm /build
 WORKDIR /build/isolated-vm
 # node-gyp-build reads /etc/alpine-release to find musl. DHI Alpine does not
 # have that file, so the loader uses the glibc prebuild and crashes.
-RUN rm -rf prebuilds && node "$NODE_GYP" rebuild --release -j 4
+# Aon: the native modules are compiled OUTSIDE BuildKit (scripts/aon-build-native.sh)
+# and carried in under ./compiled — BuildKit's RUN sandbox kills the isolated-vm
+# compile on this host whatever -j it is given. The stage only stages the files.
+RUN rm -rf prebuilds && test -f build/Release/isolated_vm.node
 
 # sqlite3 needs node-addon-api for the headers, and `tar` because a gyp action
 # unpacks the sqlite source. pnpm gives each package its own directory, so the
@@ -33,7 +36,7 @@ COPY ./compiled/node_modules/.pnpm/tar@*/node_modules/minizlib /build/node_modul
 COPY ./compiled/node_modules/.pnpm/tar@*/node_modules/yallist /build/node_modules/yallist
 COPY ./compiled/node_modules/.pnpm/sqlite3@*/node_modules/sqlite3 /build/node_modules/sqlite3
 WORKDIR /build/node_modules/sqlite3
-RUN node "$NODE_GYP" rebuild --release
+RUN test -f build/Release/node_sqlite3.node
 
 # Confluent has no prebuild for the Node version that CI installs, so
 # `./compiled` has none. Compile it here against the base image librdkafka.
@@ -42,7 +45,7 @@ RUN apk add --no-cache librdkafka-dev
 COPY ./compiled/node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/nan /build/node_modules/nan
 COPY ./compiled/node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/@confluentinc/kafka-javascript /build/node_modules/@confluentinc/kafka-javascript
 WORKDIR /build/node_modules/@confluentinc/kafka-javascript
-RUN BUILD_LIBRDKAFKA=0 node "$NODE_GYP" rebuild --release
+RUN test -f build/Release/confluent-kafka-javascript.node
 
 # A separate workflow builds the base image. A new base reaches this image only
 # when you change RUNTIME_IMAGE above.
