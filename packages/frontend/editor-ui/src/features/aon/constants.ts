@@ -1,4 +1,6 @@
 export const AON_HOME_VIEW = 'AonHome';
+export const AON_AGENTS_VIEW = 'AonAgents';
+export const AON_AGENT_VIEW = 'AonAgent';
 
 /** What a tool is doing, in his words rather than its name. */
 export const AON_DOING: Record<string, { now: string; done: string }> = {

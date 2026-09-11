@@ -1,5 +1,6 @@
 @use 'sass:math';
 @use './tokens.legacy.scss' as tokens-legacy;
+@use './aon' as aon;
 
 @mixin theme {
 	@include tokens-legacy.theme-legacy;
@@ -1245,15 +1246,18 @@
 :root {
 	color-scheme: light dark;
 	@include theme;
+	@include aon.aon-brand-light;
 }
 
 [data-theme='light'] {
 	@include theme;
+	@include aon.aon-brand-light;
 	color-scheme: light;
 }
 
 [data-theme='dark'] {
 	@include theme-dark;
+	@include aon.aon-brand-dark;
 	color-scheme: dark;
 }
 
@@ -1264,5 +1268,6 @@ body:not([data-theme]) {
 @media (prefers-color-scheme: dark) {
 	body:not([data-theme]) {
 		@include theme-dark;
+		@include aon.aon-brand-dark;
 	}
 }

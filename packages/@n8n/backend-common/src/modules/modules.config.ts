@@ -41,6 +41,8 @@ export const MODULE_NAMES = [
 	'type-availability-policies',
 	'instance-reporting',
 	'aon-core',
+	'aon-agents',
+	'aon-memory',
 ] as const;
 
 export type ModuleName = (typeof MODULE_NAMES)[number];

@@ -1,8 +1,10 @@
 import type { FrontendModuleDescription } from '@n8n/frontend-module-sdk';
 
-import { AON_HOME_VIEW } from './constants';
+import { AON_AGENT_VIEW, AON_AGENTS_VIEW, AON_HOME_VIEW } from './constants';
 
 const AonHomeView = async () => await import('./views/AonHomeView.vue');
+const AonAgentsView = async () => await import('./views/AonAgentsView.vue');
+const AonAgentView = async () => await import('./views/AonAgentView.vue');
 
 /**
  * Aon inside n8n.
@@ -21,6 +23,22 @@ export const AonModule: FrontendModuleDescription = {
 			name: AON_HOME_VIEW,
 			path: '/aon',
 			component: AonHomeView,
+			meta: {
+				middleware: ['authenticated'],
+			},
+		},
+		{
+			name: AON_AGENTS_VIEW,
+			path: '/aon/agents',
+			component: AonAgentsView,
+			meta: {
+				middleware: ['authenticated'],
+			},
+		},
+		{
+			name: AON_AGENT_VIEW,
+			path: '/aon/agents/:slug',
+			component: AonAgentView,
 			meta: {
 				middleware: ['authenticated'],
 			},

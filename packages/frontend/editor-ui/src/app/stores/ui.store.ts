@@ -37,7 +37,8 @@ import identity from 'lodash/identity';
 import { modalRegistry } from '@n8n/frontend-module-sdk';
 import { useTelemetry } from '@n8n/composables/useTelemetry';
 
-let savedTheme: ThemeOption = 'system';
+// Aon is dark by default; a choice made in Settings still wins.
+let savedTheme: ThemeOption = 'dark';
 
 try {
 	const value = getThemeOverride();

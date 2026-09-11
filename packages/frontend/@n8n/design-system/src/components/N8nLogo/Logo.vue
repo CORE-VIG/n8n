@@ -73,8 +73,9 @@ onMounted(() => {
 
 .logoText {
 	margin-left: var(--spacing--5xs);
+	color: var(--color--text--shade-1);
 	path {
-		fill: var(--color--text--shade-1);
+		fill: currentColor;
 	}
 }
 

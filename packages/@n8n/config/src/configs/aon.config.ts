@@ -28,4 +28,12 @@ export class AonConfig {
 	/** Wall clock for one assistant turn, in milliseconds. */
 	@Env('AON_TALK_TIMEOUT_MS')
 	talkTimeoutMs: number = 10 * 60_000;
+
+	/** The Ollama server that embeds memory. Empty disables vector search. */
+	@Env('AON_OLLAMA_URL')
+	ollamaUrl: string = '';
+
+	/** The embedding model. Memory chunks were embedded with bge-m3 (1024 dims). */
+	@Env('AON_EMBED_MODEL')
+	embedModel: string = 'bge-m3';
 }

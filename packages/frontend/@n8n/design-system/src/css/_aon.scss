@@ -1,0 +1,58 @@
+/**
+ * Aon's palette over n8n's tokens.
+ *
+ * Light keeps n8n's neutrals and swaps the brand to Aon's red. Dark warms the
+ * whole neutral scale (a hint of red in every grey, the way Aon's ground is
+ * near-black with warmth) and lifts the brand to a coral that reads on it.
+ * Lightness stays where n8n put it, so every contrast pair still holds.
+ */
+
+@mixin aon-brand-light {
+	--color--primary--h: 359;
+	--color--primary--s: 59%;
+	--color--primary--l: 45%;
+	--color--primary--shade-1: #9c2726;
+	--color--primary: #b8302f;
+	--color--primary--tint-1: #d4524f;
+	--color--primary--tint-2: #f0b9b8;
+	--color--primary--tint-3: #f6e5e4;
+
+	--background--brand: var(--color--primary);
+	--background--brand--hover: var(--color--primary--shade-1);
+	--background--brand--active: #85201f;
+	--background--brand--focus: var(--color--primary--tint-1);
+}
+
+@mixin aon-brand-dark {
+	--color--primary--h: 359;
+	--color--primary--s: 100%;
+	--color--primary--l: 77%;
+	--color--primary--shade-1: #ff6f73;
+	--color--primary: #ff8a8d;
+	--color--primary--tint-1: #ffa3a5;
+	--color--primary--tint-2: #5a2a2c;
+	--color--primary--tint-3: #2a1a1b;
+
+	--background--brand: var(--color--primary);
+	--background--brand--hover: var(--color--primary--shade-1);
+	--background--brand--active: #ff5a5f;
+	--background--brand--focus: var(--color--primary--tint-1);
+
+	--color--neutral-white: oklch(98% 0.004 20);
+	--color--neutral-50: oklch(96.5% 0.005 20);
+	--color--neutral-100: oklch(95% 0.005 20);
+	--color--neutral-125: oklch(94% 0.005 20);
+	--color--neutral-150: oklch(93.5% 0.005 20);
+	--color--neutral-200: oklch(90% 0.006 20);
+	--color--neutral-250: oklch(88.5% 0.006 20);
+	--color--neutral-300: oklch(86% 0.006 20);
+	--color--neutral-400: oklch(77% 0.008 20);
+	--color--neutral-500: oklch(66% 0.009 20);
+	--color--neutral-600: oklch(53% 0.01 20);
+	--color--neutral-700: oklch(36% 0.01 20);
+	--color--neutral-750: oklch(31% 0.01 20);
+	--color--neutral-800: oklch(28% 0.01 20);
+	--color--neutral-850: oklch(23% 0.01 20);
+	--color--neutral-900: oklch(21% 0.01 20);
+	--color--neutral-950: oklch(16.5% 0.01 20);
+}
