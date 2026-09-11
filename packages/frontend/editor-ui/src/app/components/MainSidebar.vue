@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
+import { AON_HOME_VIEW } from '@/features/aon/constants';
 import { useRouter } from 'vue-router';
 import { useI18n } from '@n8n/i18n';
 import { N8nScrollArea, N8nResizeWrapper, type IMenuItem } from '@n8n/design-system';
@@ -91,6 +92,16 @@ const showWhatsNewNotification = computed(
 const isResourceCenterEnabled = computed(() => resourceCenterStore.isFeatureEnabled());
 
 const mainMenuItems = computed<IMenuItem[]>(() => [
+	{
+		// Aon's front door. Its window is in the corner of every page; this is the
+		// page behind it. See features/aon.
+		id: 'aon',
+		icon: 'sparkles',
+		label: 'Aon',
+		position: 'top',
+		available: settingsStore.isModuleActive('aon-core'),
+		route: { to: { name: AON_HOME_VIEW } },
+	},
 	{
 		id: 'cloud-admin',
 		position: 'bottom',

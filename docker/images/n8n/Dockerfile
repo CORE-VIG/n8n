@@ -19,7 +19,7 @@ COPY ./compiled/node_modules/.pnpm/isolated-vm@*/node_modules/isolated-vm /build
 WORKDIR /build/isolated-vm
 # node-gyp-build reads /etc/alpine-release to find musl. DHI Alpine does not
 # have that file, so the loader uses the glibc prebuild and crashes.
-RUN rm -rf prebuilds && node "$NODE_GYP" rebuild --release -j max
+RUN rm -rf prebuilds && node "$NODE_GYP" rebuild --release -j 4
 
 # sqlite3 needs node-addon-api for the headers, and `tar` because a gyp action
 # unpacks the sqlite source. pnpm gives each package its own directory, so the
@@ -81,6 +81,14 @@ RUN set -e; \
     ln -s "$N8N/bin/n8n" /usr/local/bin/n8n; \
     mkdir -p /home/node/.n8n; \
     chown -R node:node /home/node; \
+    rm -rf /root/.npm /tmp/*
+
+# Aon: the assistant is a Claude Code session on the owner's subscription.
+# The CLI is installed here; its credentials and sessions live in a mounted
+# home owned by the n8n user, never in the image.
+ARG CLAUDE_CODE_VERSION=2.1.269
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && \
+    mkdir -p /home/node/.claude && chown -R node:node /home/node/.claude && \
     rm -rf /root/.npm /tmp/*
 
 EXPOSE 5678/tcp

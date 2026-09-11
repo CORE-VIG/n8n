@@ -74,6 +74,8 @@ export class ModuleRegistry {
 		'mcp-registry',
 		'workflow-reviews',
 		'instance-ai',
+		// Aon: the agentic layer. See packages/cli/src/modules/aon-core.
+		'aon-core',
 	];
 
 	private readonly activeModules: string[] = [];
