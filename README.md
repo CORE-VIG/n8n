@@ -1,3 +1,5 @@
+> **Modified software notice.** This is the **Aon fork** of n8n (github.com/CORE-VIG/n8n, branch `aon`), maintained for the owner's own internal use under the Sustainable Use License. It adds Aon — an assistant, agents, memory and a guard layer — as modules inside n8n. Files marked `.ee` remain under the n8n Enterprise License and are not used by the Aon modules. Upstream: github.com/n8n-io/n8n.
+
 ![Banner image](https://user-images.githubusercontent.com/10284570/173569848-c624317f-42b1-45a6-ab09-f0ea3c247648.png)
 
 # n8n – The Platform for AI Agents and Workflow Automation
