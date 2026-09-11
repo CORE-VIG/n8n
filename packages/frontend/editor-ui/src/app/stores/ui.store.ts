@@ -44,8 +44,9 @@ try {
 	const value = getThemeOverride();
 	if (value !== null) {
 		savedTheme = value;
-		applyThemeToBody(value);
 	}
+	// Stamp the default too, or a first visit renders light until Settings is touched.
+	applyThemeToBody(savedTheme);
 } catch (e) {}
 
 type UiStore = ReturnType<typeof useUIStore>;
