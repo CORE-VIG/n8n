@@ -24,18 +24,19 @@
 }
 
 @mixin aon-brand-dark {
-	--color--primary--h: 359;
-	--color--primary--s: 100%;
-	--color--primary--l: 77%;
-	--color--primary--shade-1: #ff6f73;
-	--color--primary: #ff8a8d;
-	--color--primary--tint-1: #ffa3a5;
+	// The mark's own red: white button text still reads on it (4:1), unlike a pale coral.
+	--color--primary--h: 1;
+	--color--primary--s: 77%;
+	--color--primary--l: 57%;
+	--color--primary--shade-1: #cf3532;
+	--color--primary: #e5423f;
+	--color--primary--tint-1: #ff6f73;
 	--color--primary--tint-2: #5a2a2c;
 	--color--primary--tint-3: #2a1a1b;
 
 	--background--brand: var(--color--primary);
 	--background--brand--hover: var(--color--primary--shade-1);
-	--background--brand--active: #ff5a5f;
+	--background--brand--active: #b92c2a;
 	--background--brand--focus: var(--color--primary--tint-1);
 
 	--color--neutral-white: oklch(98% 0.004 20);

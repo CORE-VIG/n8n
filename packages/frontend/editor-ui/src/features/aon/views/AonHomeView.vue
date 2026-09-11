@@ -324,7 +324,7 @@ async function search() {
 
 .modeOn {
 	background: var(--color--primary);
-	color: var(--color--text--tint-3);
+	color: var(--color--neutral-white);
 }
 
 .hint {
