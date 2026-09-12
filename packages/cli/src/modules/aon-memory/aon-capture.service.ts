@@ -50,6 +50,27 @@ export class AonCaptureService {
 		return hasUrl ? await this.captureUrl(request) : await this.captureText(request);
 	}
 
+	/**
+	 * The dream's own write: the model of the owner, as one searchable
+	 * document. Kind `model` has exactly one row: the previous dream's is
+	 * replaced, never piled up alongside it.
+	 */
+	async captureModel(text: string): Promise<AonCaptureResult> {
+		const content = text.trim();
+		const previous = await this.sources.findLatestByKind('model');
+		if (previous) await this.sources.deleteById(previous.id);
+		return await this.store({
+			origin: 'model',
+			kind: 'model',
+			title: 'Model of the owner',
+			content,
+			externalId: null,
+			contentHash: null,
+			meta: { chunker: 'v1' },
+			docTime: new Date(),
+		});
+	}
+
 	private async captureText(request: AonCaptureRequest): Promise<AonCaptureResult> {
 		const text = (request.text ?? '').trim();
 		if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) {

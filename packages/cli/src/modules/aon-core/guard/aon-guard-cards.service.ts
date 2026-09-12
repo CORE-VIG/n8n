@@ -13,6 +13,8 @@ export interface AonGuardCard {
 	tier: number;
 	summary: string;
 	runId: string | null;
+	/** "card" (the default) is a pending ask; "council" is a live approval the council already made. Lets the workflow pick its template. */
+	kind?: 'card' | 'council';
 }
 
 /**
@@ -40,7 +42,7 @@ export class AonGuardCardsService {
 			const response = await fetch(`${base}/webhook/aon-guard-card`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', 'X-Aon-Card-Secret': secret },
-				body: JSON.stringify({ ...card, url: `${base}/aon/guard` }),
+				body: JSON.stringify({ ...card, kind: card.kind ?? 'card', url: `${base}/aon/guard` }),
 				signal: AbortSignal.timeout(NOTIFY_TIMEOUT_MS),
 			});
 			if (!response.ok) {

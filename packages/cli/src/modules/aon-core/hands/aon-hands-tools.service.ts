@@ -1,3 +1,4 @@
+import type { AonGuardIdentity } from '@n8n/api-types';
 import type { User } from '@n8n/db';
 import { Service } from '@n8n/di';
 import z from 'zod';
@@ -69,11 +70,20 @@ const deleteSchema = {
 	recursive: z.boolean().optional().describe('Required to delete a directory with its contents.'),
 } satisfies z.ZodRawShape;
 
+const listWorkspacesSchema = {} satisfies z.ZodRawShape;
+const createWorkspaceSchema = {
+	slug: z.string().trim().min(1).max(64).describe('A short name for the new workspace, e.g. "site-audit".'),
+} satisfies z.ZodRawShape;
+const deleteWorkspaceSchema = {
+	slug: z.string().trim().min(1).max(64),
+} satisfies z.ZodRawShape;
+
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
 const failure = (error: unknown) => ({
 	content: [{ type: 'text' as const, text: `Hands: ${error instanceof Error ? error.message : String(error)}` }],
 	isError: true,
 });
+const ownerOnly = () => ({ content: [{ type: 'text' as const, text: 'Only the owner deletes a Hands workspace.' }], isError: true });
 
 function clip(value: string, max = MAX_TEXT): string {
 	if (Buffer.byteLength(value) <= max) return value;
@@ -101,6 +111,27 @@ export class McpAonHandsToolsService {
 	async registerTools(registerIfAllowed: RegisterToolFn, user: User) {
 		if (!(await this.hands.isConfigured())) return;
 		for (const tool of this.tools(user)) registerIfAllowed(tool);
+	}
+
+	/** Guard's verdict for one call: `deny` refuses, `ask` raises a card and returns the stop-and-wait text; `allow` records and returns null so the handler proceeds. */
+	private async guarded(
+		identity: AonGuardIdentity,
+		toolName: string,
+		args: Record<string, unknown>,
+		summary: string,
+	): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean } | null> {
+		const decision = await this.guard.decideTool(identity, toolName, args);
+		if (decision.verdict === 'deny') {
+			await this.guard.record(identity, decision.opClass, 'deny', args);
+			const label = AON_OP_CLASSES.find((c) => c.opClass === decision.opClass)?.label ?? decision.opClass;
+			return { content: [{ type: 'text', text: `Guard denies this: ${label}` }], isError: true };
+		}
+		if (decision.verdict === 'ask') {
+			const approval = await this.guard.requestApproval(identity, decision.opClass, summary, args);
+			return text(`Guard needs the owner's yes: card ${approval.id} raised. Stop now and wait.`);
+		}
+		await this.guard.record(identity, decision.opClass, 'allow', args);
+		return null;
 	}
 
 	private tools(user: User): Array<ToolDefinition<z.ZodRawShape>> {
@@ -238,6 +269,71 @@ export class McpAonHandsToolsService {
 			},
 		};
 
-		return [run, read, write, list, remove] as Array<ToolDefinition<z.ZodRawShape>>;
+		const listWorkspaces: ToolDefinition<typeof listWorkspacesSchema> = {
+			name: 'hands_list_workspaces',
+			config: {
+				description: "The caller's Hands workspaces: slug, created and last-used times, and live sandbox status when known.",
+				inputSchema: listWorkspacesSchema,
+				annotations: { title: 'List workspaces', readOnlyHint: true },
+			},
+			handler: async () => {
+				try {
+					const rows = await this.hands.listWorkspaces(user);
+					if (rows.length === 0) return text('No workspaces yet.');
+					return text(
+						rows
+							.map((w) => `- ${w.slug}, created ${w.createdAt}, last used ${w.lastUsedAt}${w.remoteStatus ? `, ${w.remoteStatus}` : ''}`)
+							.join('\n'),
+					);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		};
+
+		const createWorkspace: ToolDefinition<typeof createWorkspaceSchema> = {
+			name: 'hands_create_workspace',
+			config: {
+				description: 'Opens (creating on first use) a named Hands workspace, so files persist there between commands, conversations and Aon agent runs.',
+				inputSchema: createWorkspaceSchema,
+				annotations: { title: 'Create a workspace', readOnlyHint: false, destructiveHint: false },
+			},
+			handler: async (args, extra) => {
+				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'hands_create_workspace', args, `Create Hands workspace "${args.slug}".`);
+					if (blocked) return blocked;
+					const summary = await this.hands.createWorkspace(user, args.slug);
+					return text(`Workspace "${summary.slug}" is ready.`);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		};
+
+		const deleteWorkspace: ToolDefinition<typeof deleteWorkspaceSchema> = {
+			name: 'hands_delete_workspace',
+			config: {
+				description: 'Destroys a Hands workspace and its files, for good. Only the owner deletes a workspace.',
+				inputSchema: deleteWorkspaceSchema,
+				annotations: { title: 'Delete a workspace', readOnlyHint: false, destructiveHint: true },
+			},
+			handler: async (args, extra) => {
+				try {
+					const identity = identityFromRequest(extra, user);
+					if (identity.kind !== 'owner') return ownerOnly();
+					const blocked = await this.guarded(identity, 'hands_delete_workspace', args, `Delete Hands workspace "${args.slug}".`);
+					if (blocked) return blocked;
+					await this.hands.deleteWorkspace(user, args.slug);
+					return text(`Deleted workspace "${args.slug}".`);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		};
+
+		return [run, read, write, list, remove, listWorkspaces, createWorkspace, deleteWorkspace] as Array<
+			ToolDefinition<z.ZodRawShape>
+		>;
 	}
 }

@@ -8,6 +8,7 @@ import { AonGuardEventRepository } from '../database/repositories/aon-guard-even
 import { AonGuardPolicyRepository } from '../database/repositories/aon-guard-policy.repository';
 
 import { AonGuardCardsService } from './aon-guard-cards.service';
+import { AonCouncilService } from './council/aon-council.service';
 import { AON_OP_CLASSES, DEFAULT_AGENT_TIER_CEILING, opClassOfTool, tierOf } from './op-classes';
 
 /** A card stays open this long before it expires unclaimed. */
@@ -43,6 +44,7 @@ export class AonGuardService {
 		private readonly approvalRepository: AonGuardApprovalRepository,
 		private readonly eventRepository: AonGuardEventRepository,
 		private readonly cards: AonGuardCardsService,
+		private readonly council: AonCouncilService,
 	) {}
 
 	/**
@@ -73,7 +75,12 @@ export class AonGuardService {
 		const rows = await this.policyRepository.findFor(candidates);
 		for (const key of candidates) {
 			const match = rows.find((row) => row.identity === key && row.opClass === opClass);
-			if (match) return { verdict: match.verdict, opClass, tier, source: match.id };
+			if (match) {
+				// "council" is a policy-only verdict: it still asks (raising the card
+				// the council then rules on) — it is never itself an allow.
+				const verdict: AonGuardVerdict = match.verdict === 'council' ? 'ask' : match.verdict;
+				return { verdict, opClass, tier, source: match.id };
+			}
 		}
 		return { verdict: this.defaultVerdict(identity, tier), opClass, tier, source: 'default' };
 	}
@@ -116,6 +123,9 @@ export class AonGuardService {
 			runId: identity.runId ?? null,
 			expiresAt: new Date(Date.now() + APPROVAL_TTL_MS),
 		});
+		// Fire and forget: the council rules in its own time, on its own
+		// finding; a card exists whether or not it ever does.
+		void this.council.consider(approval);
 		await this.appendEvent({
 			identity: approval.identity,
 			runId: approval.runId,
@@ -139,6 +149,11 @@ export class AonGuardService {
 
 	async findApproval(id: string): Promise<AonGuardApproval | null> {
 		return await this.approvalRepository.findById(id);
+	}
+
+	/** Cards for the `guard_cards` tool: newest first, optionally narrowed to one status. */
+	async listCards(status: AonGuardApproval['status'] | undefined, limit: number): Promise<AonGuardApproval[]> {
+		return await this.approvalRepository.listFiltered(status, limit);
 	}
 
 	/** The newest pending card a run is waiting on, if any. */

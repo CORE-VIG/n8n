@@ -639,20 +639,44 @@ export class McpService {
 			if (this.moduleRegistry.isActive('aon-memory')) {
 				const { McpAonMemoryToolsService } = await import('../aon-memory/aon-memory-tools.service.js');
 				Container.get(McpAonMemoryToolsService).registerTools(registerIfAllowed);
+
+				// Aon: deciding a pending fact, and pages (owner-authored sources).
+				const { McpAonMemoryExtraToolsService } = await import('../aon-memory/aon-memory-extra-tools.service.js');
+				Container.get(McpAonMemoryExtraToolsService).registerTools(registerIfAllowed, user);
 			}
 
-			// Aon: Guard's own tool, so an agent can raise a card for an effect it cannot decide by itself.
+			// Aon: Guard's own tools — raising a card, listing cards, and the owner deciding one.
 			const { McpAonGuardToolsService } = await import('../aon-core/guard/aon-guard-tools.service.js');
 			Container.get(McpAonGuardToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: Settings › Aon and a capability self-description, as tools.
+			const { McpAonSettingsToolsService } = await import('../aon-core/settings/aon-settings-tools.service.js');
+			Container.get(McpAonSettingsToolsService).registerTools(registerIfAllowed, user);
 
 			// Aon: the fenced browser on the host (Obscura), offline unless AON_BROWSER_URL is set.
 			const { McpAonBrowserToolsService } = await import('../aon-core/browser/aon-browser-tools.service.js');
 			await Container.get(McpAonBrowserToolsService).registerTools(registerIfAllowed, user);
 
+			// Aon: Gmail, Calendar, Drive and Sheets through the owner's own n8n credential.
+			const { McpAonGoogleToolsService } = await import('../aon-core/google/aon-google-tools.service.js');
+			Container.get(McpAonGoogleToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: the assistant's saved conversations — list, open, rename, forget — owner only.
+			const { McpAonThreadsToolsService } = await import('../aon-core/aon-threads-tools.service.js');
+			Container.get(McpAonThreadsToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: the voice sidecar's status (speaking and transcribing carry audio, so they stay off tools).
+			const { McpAonVoiceToolsService } = await import('../aon-core/voice/aon-voice-tools.service.js');
+			Container.get(McpAonVoiceToolsService).registerTools(registerIfAllowed);
+
 			// Aon: agent authoring tools (build, read and change agents and their deliverables), owner only.
 			if (this.moduleRegistry.isActive('aon-agents')) {
 				const { McpAonAgentsToolsService } = await import('../aon-agents/aon-agents-tools.service.js');
 				Container.get(McpAonAgentsToolsService).registerTools(registerIfAllowed, user);
+
+				// Aon: a run's full report in one call.
+				const { McpAonAgentsExtraToolsService } = await import('../aon-agents/aon-agents-extra-tools.service.js');
+				Container.get(McpAonAgentsExtraToolsService).registerTools(registerIfAllowed, user);
 			}
 		}
 

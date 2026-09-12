@@ -22,6 +22,7 @@ export class AonCoreModule implements ModuleInterface {
 		await import('./hands/aon-hands.controller.js');
 		await import('./guard/aon-guard.controller.js');
 		await import('./browser/aon-browser.controller.js');
+		await import('./google/aon-google.controller.js');
 		await import('./voice/aon-voice.controller.js');
 		await import('./settings/aon-settings.controller.js');
 		const { AonTalkService } = await import('./aon-talk.service.js');

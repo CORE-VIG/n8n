@@ -1,4 +1,4 @@
-import type { AonGuardPolicy as AonGuardPolicyApi } from '@n8n/api-types';
+import type { AonGuardPolicy as AonGuardPolicyApi, AonGuardPolicyVerdict } from '@n8n/api-types';
 import { Service } from '@n8n/di';
 import { DataSource, In, Repository } from '@n8n/typeorm';
 import { randomUUID } from 'node:crypto';
@@ -14,11 +14,17 @@ interface PolicyRow {
 	updatedAt: Date;
 }
 
+const POLICY_VERDICTS: readonly string[] = ['allow', 'ask', 'deny', 'council'];
+
+function isPolicyVerdict(value: string): value is AonGuardPolicyVerdict {
+	return POLICY_VERDICTS.includes(value);
+}
+
 const toPolicy = (row: PolicyRow): AonGuardPolicyApi => ({
 	id: row.id,
 	identity: row.identity,
 	opClass: row.opClass,
-	verdict: row.verdict === 'allow' ? 'allow' : row.verdict === 'deny' ? 'deny' : 'ask',
+	verdict: isPolicyVerdict(row.verdict) ? row.verdict : 'ask',
 	note: row.note,
 	updatedAt: row.updatedAt.toISOString(),
 });

@@ -1,6 +1,13 @@
-import type { AonSettingsParts, AonSettingsUpdate, AonSettingsView, AonSkillInfo } from '@n8n/api-types';
+import type {
+	AonOwnerModel,
+	AonSettingsParts,
+	AonSettingsUpdate,
+	AonSettingsView,
+	AonSkillInfo,
+} from '@n8n/api-types';
 import { ModuleRegistry } from '@n8n/backend-common';
 import { GlobalConfig } from '@n8n/config';
+import type { User } from '@n8n/db';
 import { SettingsRepository } from '@n8n/db';
 import { Container, Service } from '@n8n/di';
 import { jsonParse } from 'n8n-workflow';
@@ -11,6 +18,7 @@ import path from 'node:path';
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
 
+import { AonGoogleAuthService } from '../google/aon-google-auth.service';
 import { DEFAULT_AGENT_TIER_CEILING } from '../guard/op-classes';
 import { AonHandsService } from '../hands/aon-hands.service';
 
@@ -22,6 +30,10 @@ const KEY_DISABLED_SKILLS = 'aon.skills.disabled';
 const KEY_GUARD_CARD_SECRET = 'aon.guardCardSecret';
 /** `aon.extractSpentEur.<YYYY-MM>`: this month's counter, one row per month. */
 const EXTRACT_SPENT_PREFIX = 'aon.extractSpentEur.';
+const KEY_MODEL_OF_OWNER = 'aon.modelOfOwner';
+const KEY_DREAM_LAST_RUN_AT = 'aon.dream.lastRunAt';
+/** JSON array of op classes the owner has pinned to shadow, whatever the council's scoreboard says. */
+const KEY_COUNCIL_SHADOW_ONLY = 'aon.council.shadowOnly';
 
 /** The persona paragraph the assistant's system prompt used to hard-code; still the default until the owner changes it. */
 export const DEFAULT_PERSONA =
@@ -35,7 +47,14 @@ export const DEFAULT_BUDGET_EUR_MONTH = 25;
 export const DEFAULT_EXTRACT_BUDGET_EUR_MONTH = 5;
 
 /** The fork's own skills: always on disk, never uninstalled, shown with a "built in" badge. */
-const BUILT_IN_SKILLS = new Set(['loop-vs-graph', 'aon-memory', 'n8n-workflow-quality']);
+const BUILT_IN_SKILLS = new Set([
+	'loop-vs-graph',
+	'aon-memory',
+	'n8n-workflow-quality',
+	'dogfood',
+	'aon-reasoning',
+	'aon-plan',
+]);
 
 /** A skill folder name, made safe: no path traversal, no surprises in a `rename`. */
 function normalizeSkillName(raw: string): string {
@@ -69,6 +88,7 @@ export class AonSettingsService {
 		private readonly settingsRepository: SettingsRepository,
 		private readonly config: GlobalConfig,
 		private readonly hands: AonHandsService,
+		private readonly google: AonGoogleAuthService,
 	) {}
 
 	async persona(): Promise<string> {
@@ -117,6 +137,54 @@ export class AonSettingsService {
 			{ key, value: String(current + costEur), loadOnStartup: false },
 			['key'],
 		);
+	}
+
+	/** The model of the owner the dream last wrote, or null before the first dream has ever run. */
+	async modelOfOwner(): Promise<AonOwnerModel | null> {
+		const row = await this.settingsRepository.findByKey(KEY_MODEL_OF_OWNER);
+		if (!row?.value) return null;
+		return jsonParse<AonOwnerModel | null>(row.value, { fallbackValue: null });
+	}
+
+	async setModelOfOwner(model: AonOwnerModel): Promise<void> {
+		await this.settingsRepository.upsert(
+			{ key: KEY_MODEL_OF_OWNER, value: JSON.stringify(model), loadOnStartup: false },
+			['key'],
+		);
+	}
+
+	/** When the dream last finished a pass, for the daily scheduler to know whether today's has run yet. */
+	async dreamLastRunAt(): Promise<Date | null> {
+		const row = await this.settingsRepository.findByKey(KEY_DREAM_LAST_RUN_AT);
+		if (!row?.value) return null;
+		const when = new Date(row.value);
+		return Number.isNaN(when.getTime()) ? null : when;
+	}
+
+	async setDreamLastRunAt(when: Date): Promise<void> {
+		await this.settingsRepository.upsert(
+			{ key: KEY_DREAM_LAST_RUN_AT, value: when.toISOString(), loadOnStartup: false },
+			['key'],
+		);
+	}
+
+	/** Op classes the owner has pinned to shadow: the council still rules and records, but never decides. */
+	async councilShadowOnlyClasses(): Promise<string[]> {
+		const row = await this.settingsRepository.findByKey(KEY_COUNCIL_SHADOW_ONLY);
+		if (!row?.value) return [];
+		const parsed = jsonParse<string[]>(row.value, { fallbackValue: [] });
+		return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : [];
+	}
+
+	/** The Guard page's "Keep in shadow" switch, one op class at a time. Read-modify-write: the owner toggles this by hand, never concurrently. */
+	async setCouncilShadowOnly(opClass: string, shadowOnly: boolean): Promise<string[]> {
+		const current = await this.councilShadowOnlyClasses();
+		const next = shadowOnly ? [...new Set([...current, opClass])] : current.filter((c) => c !== opClass);
+		await this.settingsRepository.upsert(
+			{ key: KEY_COUNCIL_SHADOW_ONLY, value: JSON.stringify(next), loadOnStartup: false },
+			['key'],
+		);
+		return next;
 	}
 
 	/** The Guard-card notifier's own secret: generated once, on first use, and never rotated automatically. */
@@ -258,16 +326,17 @@ export class AonSettingsService {
 
 	// --- parts -----------------------------------------------------------------
 
-	async parts(): Promise<AonSettingsParts> {
+	async parts(user: User): Promise<AonSettingsParts> {
 		const chatIds = this.config.aon.telegramChatIds
 			.split(',')
 			.map((id) => id.trim())
 			.filter(Boolean);
-		const [model, handsConfigured, executorRunning, extractSpentEur] = await Promise.all([
+		const [model, handsConfigured, executorRunning, extractSpentEur, google] = await Promise.all([
 			this.talkModel(),
 			this.hands.isConfigured(),
 			this.executorRunning(),
 			this.extractSpentEurThisMonth(),
+			this.google.status(user),
 		]);
 		return {
 			assistant: { model, signedIn: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) },
@@ -280,6 +349,7 @@ export class AonSettingsService {
 			},
 			executor: { running: executorRunning },
 			guard: { tierCeilingDefault: DEFAULT_AGENT_TIER_CEILING },
+			google,
 		};
 	}
 
@@ -296,14 +366,14 @@ export class AonSettingsService {
 		return Container.get(AonExecutorService).isRunning();
 	}
 
-	async view(): Promise<AonSettingsView> {
+	async view(user: User): Promise<AonSettingsView> {
 		const [persona, talkModel, budgetEurMonth, extractBudgetEurMonth, skills, parts] = await Promise.all([
 			this.persona(),
 			this.talkModel(),
 			this.budgetEurMonth(),
 			this.extractBudgetEurMonth(),
 			this.listSkills(),
-			this.parts(),
+			this.parts(user),
 		]);
 		return { persona, talkModel, budgetEurMonth, extractBudgetEurMonth, skills, parts };
 	}

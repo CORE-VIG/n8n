@@ -17,6 +17,8 @@ export class AonMemoryModule implements ModuleInterface {
 		Container.get(AonEmbedQueueService).start();
 		const { AonExtractService } = await import('./aon-extract.service.js');
 		Container.get(AonExtractService).start();
+		const { AonDreamService } = await import('./aon-dream.service.js');
+		Container.get(AonDreamService).start();
 	}
 
 	async entities() {

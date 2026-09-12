@@ -47,6 +47,14 @@ export interface AonSourceKindCount {
 	count: number;
 }
 
+/** A source's title, origin and date only: what the dream reads to see what is new. */
+export interface AonRecentSourceRow {
+	title: string;
+	origin: string;
+	docTime: Date | null;
+	createdAt: Date;
+}
+
 interface ChunkRow {
 	id: string;
 	seq: number;
@@ -123,12 +131,15 @@ export class AonSourceRepository extends Repository<AonSource> {
 		q,
 		origin,
 		status,
+		kind,
 		limit,
 		offset,
 	}: {
 		q?: string;
 		origin?: string;
 		status?: string;
+		/** Narrows to one source kind (text, page, mail, …); omitted, every kind. */
+		kind?: string;
 		limit: number;
 		offset: number;
 	}): Promise<AonSourceList> {
@@ -139,16 +150,18 @@ export class AonSourceRepository extends Repository<AonSource> {
 				WHERE ($1::text IS NULL OR s.title ILIKE '%' || $1 || '%')
 					AND ($2::text IS NULL OR s.origin = $2)
 					AND ($3::text IS NULL OR s.status = $3)
+					AND ($4::text IS NULL OR s.kind = $4)
 				ORDER BY s.created_at DESC
-				LIMIT $4 OFFSET $5`,
-				[q ?? null, origin ?? null, status ?? null, limit, offset],
+				LIMIT $5 OFFSET $6`,
+				[q ?? null, origin ?? null, status ?? null, kind ?? null, limit, offset],
 			),
 			this.manager.query<Array<{ count: number }>>(
 				`SELECT count(*)::int AS count FROM ${this.table} s
 				WHERE ($1::text IS NULL OR s.title ILIKE '%' || $1 || '%')
 					AND ($2::text IS NULL OR s.origin = $2)
-					AND ($3::text IS NULL OR s.status = $3)`,
-				[q ?? null, origin ?? null, status ?? null],
+					AND ($3::text IS NULL OR s.status = $3)
+					AND ($4::text IS NULL OR s.kind = $4)`,
+				[q ?? null, origin ?? null, status ?? null, kind ?? null],
 			),
 			this.manager.query<AonSourceList['origins']>(
 				`SELECT s.origin, count(*)::int AS count FROM ${this.table} s
@@ -197,6 +210,34 @@ export class AonSourceRepository extends Repository<AonSource> {
 			[origin, contentHash],
 		);
 		return rows[0] ? toSummary(rows[0]) : null;
+	}
+
+	/** The newest source with this exact title and kind: how `memory_page_write` finds the page it is replacing. */
+	async findByTitleAndKind(title: string, kind: string): Promise<AonSourceSummary | null> {
+		const rows = await this.manager.query<SourceRow[]>(
+			`SELECT ${this.summaryColumns} FROM ${this.table} s
+			WHERE s.kind = $1 AND s.title = $2
+			ORDER BY s.created_at DESC
+			LIMIT 1`,
+			[kind, title],
+		);
+		return rows[0] ? toSummary(rows[0]) : null;
+	}
+
+	/** Owner-authored pages (or any other kind), newest first, optionally narrowed by title. */
+	async listByKind(
+		kind: string,
+		q: string | undefined,
+		limit: number,
+	): Promise<Array<{ id: string; title: string; updatedAt: string | null }>> {
+		const rows = await this.manager.query<Array<{ id: string; title: string; updatedAt: Date | null }>>(
+			`SELECT s.id, s.title, s.indexed_at AS "updatedAt" FROM ${this.table} s
+			WHERE s.kind = $1 AND ($2::text IS NULL OR s.title ILIKE '%' || $2 || '%')
+			ORDER BY s.indexed_at DESC NULLS LAST, s.created_at DESC
+			LIMIT $3`,
+			[kind, q ?? null, limit],
+		);
+		return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: iso(r.updatedAt) }));
 	}
 
 	async findByExternalId(origin: string, externalId: string): Promise<AonSourceSummary | null> {
@@ -268,6 +309,30 @@ export class AonSourceRepository extends Repository<AonSource> {
 
 	async markExtracted(id: string): Promise<void> {
 		await this.manager.query(`UPDATE ${this.table} SET extracted_at = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
+	}
+
+	// --- the dream's own reads ------------------------------------------------
+	// AonDreamService reads what it needs about sources through these two
+	// methods; it never touches TypeORM directly.
+
+	/** The newest row of a given kind (e.g. `model`), so a re-capture can replace it rather than pile up. */
+	async findLatestByKind(kind: string): Promise<{ id: string } | null> {
+		const rows = await this.manager.query<Array<{ id: string }>>(
+			`SELECT id FROM ${this.table} WHERE kind = $1 ORDER BY created_at DESC LIMIT 1`,
+			[kind],
+		);
+		return rows[0] ?? null;
+	}
+
+	/** The newest sources' titles, origin and date, for the dream's own read of what changed lately. */
+	async listRecentTitles(limit: number): Promise<AonRecentSourceRow[]> {
+		return await this.manager.query<AonRecentSourceRow[]>(
+			`SELECT title, origin, doc_time AS "docTime", created_at AS "createdAt"
+			FROM ${this.table}
+			ORDER BY created_at DESC
+			LIMIT $1`,
+			[limit],
+		);
 	}
 
 	/** Sources grouped by kind, most common first: the Memory page's "sky" categories. */

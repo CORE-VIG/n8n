@@ -1,6 +1,8 @@
 import type {
 	AonCaptureRequest,
 	AonCaptureResult,
+	AonDreamRunResult,
+	AonOwnerModel,
 	AonSourceDetail,
 	AonSourceList,
 } from '@n8n/api-types';
@@ -32,4 +34,12 @@ export async function deleteSource(ctx: IRestApiContext, id: string) {
 		'DELETE',
 		`/aon/memory/sources/${encodeURIComponent(id)}`,
 	);
+}
+
+export async function getOwnerModel(ctx: IRestApiContext) {
+	return await makeRestApiRequest<AonOwnerModel>(ctx, 'GET', '/aon/memory/model');
+}
+
+export async function dreamNow(ctx: IRestApiContext) {
+	return await makeRestApiRequest<AonDreamRunResult>(ctx, 'POST', '/aon/memory/dream');
 }

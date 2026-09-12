@@ -1,13 +1,15 @@
-import type { AonCaptureRequest, AonFactSummary } from '@n8n/api-types';
+import type { AonCaptureRequest, AonFactSummary, AonOwnerModelBuckets } from '@n8n/api-types';
 import { Service } from '@n8n/di';
 import z from 'zod';
 
 import type { RegisterToolFn, ToolDefinition } from '@/modules/mcp/mcp.types';
+import { AonSettingsService } from '@/modules/aon-core/settings/aon-settings.service';
 
 import { AonCaptureService } from './aon-capture.service';
 import { AonEntityRepository } from './database/repositories/aon-entity.repository';
 import { AonFactRepository } from './database/repositories/aon-fact.repository';
 import { AonMemorySearchService } from './aon-memory-search.service';
+import { AonObservationRepository } from './database/repositories/aon-observation.repository';
 
 const searchSchema = {
 	q: z.string().min(1).max(2000).describe('Words, or a question in plain language.'),
@@ -32,6 +34,20 @@ const entitySchema = {
 	name: z.string().min(1).max(200).describe('The entity to look up, by name or alias.'),
 } satisfies z.ZodRawShape;
 
+const OWNER_MODEL_BUCKETS = ['identity', 'people', 'projects', 'preferences', 'commitments'] as const;
+
+const aboutMeSchema = {
+	bucket: z
+		.enum(OWNER_MODEL_BUCKETS)
+		.optional()
+		.describe('One bucket of the model of him; all five when omitted.'),
+} satisfies z.ZodRawShape;
+
+const contextSchema = {
+	topic: z.string().min(1).max(200).describe('A person, project or question to brief on.'),
+	limit: z.number().int().min(1).max(8).optional().describe('Default 5.'),
+} satisfies z.ZodRawShape;
+
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
 const failure = (error: unknown) => ({
 	content: [{ type: 'text' as const, text: `Memory: ${error instanceof Error ? error.message : String(error)}` }],
@@ -49,6 +65,8 @@ export class McpAonMemoryToolsService {
 		private readonly capture: AonCaptureService,
 		private readonly entities: AonEntityRepository,
 		private readonly facts: AonFactRepository,
+		private readonly observations: AonObservationRepository,
+		private readonly settings: AonSettingsService,
 	) {}
 
 	registerTools(registerIfAllowed: RegisterToolFn) {
@@ -155,10 +173,106 @@ export class McpAonMemoryToolsService {
 			},
 		};
 
+		const aboutMe: ToolDefinition<typeof aboutMeSchema> = {
+			name: 'memory_about_me',
+			config: {
+				description:
+					'Who he is: the model of him the nightly dream keeps, in five buckets (identity, people, projects, preferences, commitments). Call this to know who he is; call memory_context before advising on his life, people or projects.',
+				inputSchema: aboutMeSchema,
+				annotations: { title: 'The model of him', readOnlyHint: true },
+			},
+			handler: async (args) => {
+				try {
+					const model = await this.settings.modelOfOwner();
+					if (!model?.updatedAt) return text('The model of him is empty: no dream has run yet.');
+					const stamp = `as of ${model.updatedAt.slice(0, 10)}`;
+					if (args.bucket) {
+						const value = model.buckets[args.bucket];
+						return text(value.trim() ? `${args.bucket} (${stamp}):\n${value}` : `Nothing yet in ${args.bucket} (${stamp}).`);
+					}
+					const lines = OWNER_MODEL_BUCKETS.map(
+						(bucket) => `${bucket.toUpperCase()}:\n${model.buckets[bucket].trim() || '(empty)'}`,
+					);
+					return text(`The model of him, ${stamp}:\n\n${lines.join('\n\n')}`);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		};
+
+		const context: ToolDefinition<typeof contextSchema> = {
+			name: 'memory_context',
+			config: {
+				description:
+					"A brief on a topic before acting: the model of him where it mentions the topic, the best memory hits, matching entities with their confirmed facts, and observations that touch it. Call this before advising on his life, people or projects.",
+				inputSchema: contextSchema,
+				annotations: { title: 'Context brief', readOnlyHint: true },
+			},
+			handler: async (args) => {
+				try {
+					const topic = args.topic.trim();
+					const lower = topic.toLowerCase();
+					const limit = args.limit ?? 5;
+
+					const [model, searchResult, entityMatches, observations] = await Promise.all([
+						this.settings.modelOfOwner(),
+						this.search.search({ query: topic, mode: 'hybrid', limit }),
+						this.entities.list({ q: topic, limit: 3, offset: 0 }),
+						this.observations.list(200),
+					]);
+
+					const modelHits: Array<{ bucket: keyof AonOwnerModelBuckets; value: string }> = model
+						? OWNER_MODEL_BUCKETS.filter((bucket) => model.buckets[bucket].toLowerCase().includes(lower)).map(
+								(bucket) => ({ bucket, value: model.buckets[bucket] }),
+							)
+						: [];
+					const entityDetails = await Promise.all(
+						entityMatches.items.map((e) => this.entities.findDetail(e.id)),
+					);
+					const matchingObservations = observations
+						.filter((o) => o.text.toLowerCase().includes(lower))
+						.slice(0, limit);
+
+					const lines: string[] = [`Context on "${topic}":`];
+					if (modelHits.length) {
+						lines.push('', 'From the model of him:');
+						for (const { bucket, value } of modelHits) lines.push(`- ${bucket}: ${value.slice(0, 400)}`);
+					}
+					if (searchResult.hits.length) {
+						lines.push('', 'Memory hits:');
+						for (const h of searchResult.hits) {
+							lines.push(
+								`- [${h.origin}] ${h.title}${h.docTime ? ` (${h.docTime.slice(0, 10)})` : ''}: ${h.text.trim().slice(0, 300)}`,
+							);
+						}
+					}
+					for (const detail of entityDetails) {
+						if (!detail) continue;
+						const confirmed = detail.facts.filter((f) => f.status === 'confirmed');
+						lines.push('', `${detail.name} (${detail.kind}):`);
+						if (confirmed.length) for (const f of confirmed.slice(0, limit)) lines.push(factLine(f));
+						else lines.push('- (no confirmed facts yet)');
+					}
+					if (matchingObservations.length) {
+						lines.push('', 'Observations:');
+						for (const o of matchingObservations) lines.push(`- (${o.bucket}) ${o.text}`);
+					}
+
+					const brief = lines.join('\n').slice(0, 3000);
+					if (lines.length === 1) return text(`Nothing in memory speaks to "${topic}" yet.`);
+					return text(brief);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		};
+
 		registerIfAllowed(search);
 		registerIfAllowed(remember);
 		registerIfAllowed(facts);
 		registerIfAllowed(entity);
+		registerIfAllowed(aboutMe);
+		registerIfAllowed(context);
 	}
 }
 

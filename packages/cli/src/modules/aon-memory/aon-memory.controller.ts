@@ -1,6 +1,7 @@
 import type {
 	AonCaptureRequest,
 	AonCaptureResult,
+	AonDreamRunResult,
 	AonEntityDetail,
 	AonEntitySummary,
 	AonFactList,
@@ -11,6 +12,7 @@ import type {
 	AonMemorySearchResult,
 	AonMemorySky,
 	AonObservationSummary,
+	AonOwnerModel,
 	AonSourceDetail,
 	AonSourceList,
 } from '@n8n/api-types';
@@ -22,8 +24,10 @@ import { z } from 'zod';
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { aonOwnerOnly } from '@/modules/aon-core/aon-owner';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
+import { AonSettingsService } from '@/modules/aon-core/settings/aon-settings.service';
 
 import { AonCaptureService } from './aon-capture.service';
+import { AonDreamService } from './aon-dream.service';
 import { AonEmbedService } from './aon-embed.service';
 import { AonGraphService } from './aon-graph.service';
 import { AonMemorySearchService } from './aon-memory-search.service';
@@ -87,6 +91,8 @@ export class AonMemoryController {
 		private readonly facts: AonFactRepository,
 		private readonly observations: AonObservationRepository,
 		private readonly graph: AonGraphService,
+		private readonly settings: AonSettingsService,
+		private readonly dream: AonDreamService,
 	) {}
 
 	@Middleware()
@@ -236,7 +242,26 @@ export class AonMemoryController {
 	async listObservations(): Promise<AonObservationSummary[]> {
 		return await this.observations.list(OBSERVATIONS_DEFAULT);
 	}
+
+	/** The model of the owner: the five buckets the dream last wrote, or an empty one before its first run. */
+	@Get('/model')
+	async getModel(): Promise<AonOwnerModel> {
+		return (await this.settings.modelOfOwner()) ?? EMPTY_OWNER_MODEL;
+	}
+
+	/** Dream now: the owner's own button. Shares the token and budget checks with the daily schedule. */
+	@Post('/dream')
+	async dreamNow(): Promise<AonDreamRunResult> {
+		return await this.dream.runNow('manual');
+	}
 }
+
+const EMPTY_OWNER_MODEL: AonOwnerModel = {
+	updatedAt: null,
+	buckets: { identity: '', people: '', projects: '', preferences: '', commitments: '' },
+	sources: 0,
+	facts: 0,
+};
 
 function optionalString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;

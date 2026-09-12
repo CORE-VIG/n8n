@@ -12,6 +12,7 @@ import { DEBOUNCE_TIME } from '@/app/constants';
 
 import { searchMemory } from '../aon.api';
 import AonNav from '../components/AonNav.vue';
+import AonOwnerModel from '../components/memory/AonOwnerModel.vue';
 import { AON_SOURCE_VIEW } from '../constants';
 import AonEntitiesList from '../graph/AonEntitiesList.vue';
 import AonFactsTriage from '../graph/AonFactsTriage.vue';
@@ -289,6 +290,10 @@ onMounted(() => {
 					</li>
 				</ol>
 			</div>
+		</section>
+
+		<section :class="$style.section">
+			<AonOwnerModel />
 		</section>
 
 		<section :class="$style.section" data-test-id="aon-memory-graph">

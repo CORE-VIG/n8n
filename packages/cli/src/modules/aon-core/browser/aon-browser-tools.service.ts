@@ -16,6 +16,8 @@ const readSchema = {
 	url: z.string().min(1).max(2048).describe('A public web page to open and read.'),
 } satisfies z.ZodRawShape;
 
+const statusSchema = {} satisfies z.ZodRawShape;
+
 const stepSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('navigate'), url: z.string().min(1).max(2048) }),
 	z.object({ kind: z.literal('click'), ref: z.string().optional(), text: z.string().optional() }),
@@ -72,6 +74,21 @@ export class McpAonBrowserToolsService {
 	) {}
 
 	async registerTools(registerIfAllowed: RegisterToolFn, user: User) {
+		const status: ToolDefinition<typeof statusSchema> = {
+			name: 'browser_status',
+			config: {
+				description: 'Whether the fenced browser is configured and online, and its host.',
+				inputSchema: statusSchema,
+				annotations: { title: 'Browser status', readOnlyHint: true },
+			},
+			handler: async () => {
+				const result = await this.browser.status();
+				if (!result.configured) return text('The browser is not configured: AON_BROWSER_URL is unset.');
+				return text(`Browser ${result.online ? 'online' : 'offline'}${result.host ? ` (${result.host})` : ''}.`);
+			},
+		};
+		registerIfAllowed(status);
+
 		if (!(await this.browser.isConfigured())) return;
 		for (const tool of this.tools(user)) registerIfAllowed(tool);
 	}

@@ -156,3 +156,29 @@ export interface AonMemorySky {
 	facts: number;
 	observations: number;
 }
+
+/** The model of the owner, in five plain-text parts. Each is at most 1200 characters. */
+export interface AonOwnerModelBuckets {
+	identity: string;
+	people: string;
+	projects: string;
+	preferences: string;
+	commitments: string;
+}
+
+/** `GET /aon/memory/model`: the settings-held model of the owner, rebuilt nightly by the dream. */
+export interface AonOwnerModel {
+	updatedAt: string | null;
+	buckets: AonOwnerModelBuckets;
+	/** Sources the dream that built this model had read. */
+	sources: number;
+	/** Facts (confirmed and pending) the dream that built this model had to work with. */
+	facts: number;
+}
+
+/** `POST /aon/memory/dream`: the result of one dream pass, run now. */
+export interface AonDreamRunResult {
+	ran: boolean;
+	message: string;
+	model?: AonOwnerModel;
+}

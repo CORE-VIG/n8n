@@ -39,6 +39,13 @@ export interface AonSettingsPartGuard {
 	tierCeilingDefault: number;
 }
 
+export interface AonSettingsPartGoogle {
+	configured: boolean;
+	credentialName: string | null;
+	email: string | null;
+	scopes: string[];
+}
+
 export interface AonSettingsParts {
 	assistant: AonSettingsPartAssistant;
 	telegram: AonSettingsPartTelegram;
@@ -46,6 +53,7 @@ export interface AonSettingsParts {
 	memory: AonSettingsPartMemory;
 	executor: AonSettingsPartExecutor;
 	guard: AonSettingsPartGuard;
+	google: AonSettingsPartGoogle;
 }
 
 /** `GET /aon/settings`: the whole page in one call. */

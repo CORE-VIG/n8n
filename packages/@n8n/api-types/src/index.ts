@@ -15,6 +15,7 @@ export type * from './aon-memory';
 export * from './aon-runs';
 export type * from './aon-hands';
 export type * from './aon-browser';
+export type * from './aon-google';
 export type * from './aon-threads';
 export * from './aon-guard';
 export type * from './aon-settings';

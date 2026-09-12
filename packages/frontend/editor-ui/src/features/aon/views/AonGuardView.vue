@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import type { AonAgentSummary, AonGuardEvent, AonGuardOverview, AonGuardVerdict } from '@n8n/api-types';
+import type {
+	AonAgentSummary,
+	AonCouncilClassView,
+	AonGuardEvent,
+	AonGuardOverview,
+	AonGuardPolicyVerdict,
+} from '@n8n/api-types';
 import { N8nButton, N8nOption, N8nSelect } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useRootStore } from '@n8n/stores/useRootStore';
@@ -9,7 +15,15 @@ import { RouterLink } from 'vue-router';
 import { getAgents } from '../aon.api';
 import AonNav from '../components/AonNav.vue';
 import { AON_RUN_VIEW } from '../constants';
-import { approve, deletePolicy, deny, getGuardOverview, putPolicy } from '../guard.api';
+import {
+	approve,
+	deletePolicy,
+	deny,
+	getCouncilOverview,
+	getGuardOverview,
+	putCouncilShadowOnly,
+	putPolicy,
+} from '../guard.api';
 import { useAonTime } from '../useAonTime';
 
 /** One row of the policy table, for the currently selected identity. */
@@ -18,7 +32,7 @@ interface PolicyRowState {
 	tier: number;
 	label: string;
 	policyId: string | null;
-	verdict: '' | AonGuardVerdict;
+	verdict: '' | AonGuardPolicyVerdict;
 	note: string;
 }
 
@@ -30,9 +44,11 @@ const rootStore = useRootStore();
 const { ago } = useAonTime();
 
 const overview = ref<AonGuardOverview | null>(null);
+const council = ref<AonCouncilClassView[]>([]);
 const agents = ref<AonAgentSummary[]>([]);
 const error = ref<string | null>(null);
 const busyCard = ref<string | null>(null);
+const busyCouncilClass = ref<string | null>(null);
 const savedFlash = ref(false);
 const selectedIdentity = ref('*');
 
@@ -53,6 +69,14 @@ async function loadOverview() {
 	}
 }
 
+async function loadCouncil() {
+	try {
+		council.value = (await getCouncilOverview(rootStore.restApiContext)).classes;
+	} catch (e) {
+		error.value = errorMessage(e);
+	}
+}
+
 async function loadAgents() {
 	try {
 		agents.value = await getAgents(rootStore.restApiContext);
@@ -62,9 +86,10 @@ async function loadAgents() {
 }
 
 onMounted(async () => {
-	await Promise.all([loadOverview(), loadAgents()]);
+	await Promise.all([loadOverview(), loadCouncil(), loadAgents()]);
 	pollTimer = setInterval(() => {
 		void loadOverview();
+		void loadCouncil();
 	}, POLL_MS);
 });
 
@@ -92,6 +117,7 @@ function verdictLabel(verdict: AonGuardEvent['verdict']): string {
 	if (verdict === 'asked') return i18n.baseText('aon.guard.event.asked');
 	if (verdict === 'approved') return i18n.baseText('aon.guard.event.approved');
 	if (verdict === 'denied') return i18n.baseText('aon.guard.event.denied');
+	if (verdict === 'council') return i18n.baseText('aon.guard.event.council');
 	return i18n.baseText('aon.guard.event.expired');
 }
 
@@ -148,12 +174,27 @@ async function onDeny(id: string) {
 	}
 }
 
+async function onToggleShadowOnly(row: AonCouncilClassView, event: Event) {
+	const target = event.target;
+	if (!(target instanceof HTMLInputElement)) return;
+	busyCouncilClass.value = row.opClass;
+	try {
+		await putCouncilShadowOnly(rootStore.restApiContext, row.opClass, target.checked);
+		flashSaved();
+		await loadCouncil();
+	} catch (e) {
+		error.value = errorMessage(e);
+	} finally {
+		busyCouncilClass.value = null;
+	}
+}
+
 async function onVerdictChange(row: PolicyRowState, event: Event) {
 	const target = event.target;
 	if (!(target instanceof HTMLSelectElement)) return;
 	const value = target.value;
 	try {
-		if (value === 'allow' || value === 'ask' || value === 'deny') {
+		if (value === 'allow' || value === 'ask' || value === 'deny' || value === 'council') {
 			await putPolicy(rootStore.restApiContext, {
 				identity: selectedIdentity.value,
 				opClass: row.opClass,
@@ -290,6 +331,7 @@ async function onNoteChange(row: PolicyRowState, event: Event) {
 									<option value="allow">{{ i18n.baseText('aon.guard.verdict.allow') }}</option>
 									<option value="ask">{{ i18n.baseText('aon.guard.verdict.ask') }}</option>
 									<option value="deny">{{ i18n.baseText('aon.guard.verdict.deny') }}</option>
+									<option value="council">{{ i18n.baseText('aon.guard.verdict.council') }}</option>
 								</select>
 							</td>
 							<td>
@@ -298,6 +340,55 @@ async function onNoteChange(row: PolicyRowState, event: Event) {
 									:value="row.note"
 									:disabled="row.verdict === ''"
 									@change="onNoteChange(row, $event)"
+								/>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</section>
+
+		<section :class="$style.section" data-test-id="aon-guard-council">
+			<h2 :class="$style.h2">{{ i18n.baseText('aon.guard.council.title') }}</h2>
+			<p :class="$style.lede">{{ i18n.baseText('aon.guard.council.lede') }}</p>
+
+			<p v-if="council.length === 0" :class="$style.lede">
+				{{ i18n.baseText('aon.guard.council.none') }}
+			</p>
+			<div v-else :class="$style.tableWrap">
+				<table :class="$style.table">
+					<thead>
+						<tr>
+							<th>{{ i18n.baseText('aon.guard.column.opClass') }}</th>
+							<th>{{ i18n.baseText('aon.guard.council.column.status') }}</th>
+							<th>{{ i18n.baseText('aon.guard.council.column.rulings') }}</th>
+							<th>{{ i18n.baseText('aon.guard.council.column.agreement') }}</th>
+							<th>{{ i18n.baseText('aon.guard.council.column.falseApprovals') }}</th>
+							<th>{{ i18n.baseText('aon.guard.council.column.last') }}</th>
+							<th>{{ i18n.baseText('aon.guard.council.column.shadowOnly') }}</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr v-for="row in council" :key="row.opClass">
+							<td>
+								<div>{{ opClassLabel(row.opClass) }}</div>
+								<div :class="$style.opClassCode">{{ row.opClass }}</div>
+							</td>
+							<td>
+								<span v-if="row.live">{{ i18n.baseText('aon.guard.council.live') }}</span>
+								<span v-else>{{ i18n.baseText('aon.guard.council.shadow') }}</span>
+								<div v-if="row.blocker" :class="$style.opClassCode">{{ row.blocker }}</div>
+							</td>
+							<td>{{ row.decided }} / {{ row.rulings }}</td>
+							<td>{{ row.agreement }}</td>
+							<td>{{ row.falseApprovals }}</td>
+							<td>{{ row.lastRulingAt ? ago(row.lastRulingAt) : '—' }}</td>
+							<td>
+								<input
+									type="checkbox"
+									:checked="row.shadowOnly"
+									:disabled="busyCouncilClass === row.opClass"
+									@change="onToggleShadowOnly(row, $event)"
 								/>
 							</td>
 						</tr>

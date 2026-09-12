@@ -34,8 +34,8 @@ export class AonSettingsController {
 	}
 
 	@Get('/')
-	async get(): Promise<AonSettingsView> {
-		return await this.settings.view();
+	async get(req: AuthenticatedRequest): Promise<AonSettingsView> {
+		return await this.settings.view(req.user);
 	}
 
 	@Put('/')
@@ -49,7 +49,7 @@ export class AonSettingsController {
 			throw new BadRequestError(`"${talkModel}" is not one of the models Aon offers.`);
 		}
 		await this.settings.update(parsed.data);
-		return await this.settings.view();
+		return await this.settings.view(req.user);
 	}
 
 	@Put('/skills/:name')

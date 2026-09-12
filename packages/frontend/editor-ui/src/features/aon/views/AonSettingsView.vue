@@ -17,6 +17,10 @@ const MODEL_BANDS = [
 
 const SAVED_FLASH_MS = 1500;
 
+/** Kept in step with `GOOGLE_REQUIRED_SCOPES` in `aon-core/google/aon-google-auth.service.ts`. */
+const GOOGLE_SCOPES =
+	'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.email';
+
 const i18n = useI18n();
 const rootStore = useRootStore();
 
@@ -271,6 +275,17 @@ const parts = computed(() => settings.value?.parts ?? null);
 							i18n.baseText('aon.settings.parts.guard', {
 								interpolate: { tier: String(parts.guard.tierCeilingDefault) },
 							})
+						}}
+					</li>
+					<li>
+						{{
+							parts.google.configured
+								? i18n.baseText('aon.settings.parts.google.connected', {
+										interpolate: { email: parts.google.email ?? parts.google.credentialName ?? '' },
+									})
+								: i18n.baseText('aon.settings.parts.google.notConnected', {
+										interpolate: { scopes: GOOGLE_SCOPES },
+									})
 						}}
 					</li>
 				</ul>

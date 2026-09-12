@@ -2,7 +2,7 @@ import type { AonGuardApproval as AonGuardApprovalApi } from '@n8n/api-types';
 import { Service } from '@n8n/di';
 
 import { returningRows } from '../returning-rows';
-import { DataSource, IsNull, MoreThan, Repository } from '@n8n/typeorm';
+import { DataSource, In, IsNull, MoreThan, Repository } from '@n8n/typeorm';
 import { randomUUID } from 'node:crypto';
 
 import { AonGuardApproval } from '../entities/aon-guard-approval.entity';
@@ -103,6 +103,38 @@ export class AonGuardApprovalRepository extends Repository<AonGuardApproval> {
 
 	async listPending(): Promise<AonGuardApprovalApi[]> {
 		const rows = await this.find({ where: { status: 'pending' }, order: { createdAt: 'DESC' } });
+		return rows.map(toApproval);
+	}
+
+	/**
+	 * Every one of these cards, in one query. Used to join a batch of
+	 * council-ruling events back to their cards. Named `findManyByIds`, not
+	 * `findByIds`: `Repository.findByIds` already exists (deprecated, a
+	 * different return shape) and TypeORM's base method would otherwise win.
+	 */
+	async findManyByIds(ids: string[]): Promise<AonGuardApprovalApi[]> {
+		if (ids.length === 0) return [];
+		const rows = await this.find({ where: { id: In(ids) } });
+		return rows.map(toApproval);
+	}
+
+	/** The most recent decided cards of one op class, whatever the identity, newest decision first. The council's own prompt: what the owner did before. */
+	async listDecidedByOpClass(opClass: string, limit: number): Promise<AonGuardApprovalApi[]> {
+		const rows = await this.find({
+			where: { opClass, status: In(['approved', 'denied', 'used']) },
+			order: { decidedAt: 'DESC' },
+			take: limit,
+		});
+		return rows.map(toApproval);
+	}
+
+	/** Cards for the `guard_cards` tool: newest first, optionally narrowed to one status. */
+	async listFiltered(status: string | undefined, limit: number): Promise<AonGuardApprovalApi[]> {
+		const rows = await this.find({
+			where: status ? { status } : {},
+			order: { createdAt: 'DESC' },
+			take: limit,
+		});
 		return rows.map(toApproval);
 	}
 

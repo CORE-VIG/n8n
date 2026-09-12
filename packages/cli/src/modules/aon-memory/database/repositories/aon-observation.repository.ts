@@ -1,6 +1,7 @@
 import type { AonObservationSummary } from '@n8n/api-types';
 import { Service } from '@n8n/di';
 import { DataSource, Repository } from '@n8n/typeorm';
+import { randomUUID } from 'node:crypto';
 
 import { AonObservation } from '../entities/aon-observation.entity';
 
@@ -50,5 +51,36 @@ export class AonObservationRepository extends Repository<AonObservation> {
 
 	async countAll(): Promise<number> {
 		return await this.count();
+	}
+
+	/**
+	 * The dream's own write: an identical (bucket, text) is refreshed in
+	 * place — its salience and `lastSeen` move, nothing new is inserted —
+	 * anything else becomes a new active observation.
+	 */
+	async upsertObservation(input: { bucket: string; text: string; salience: number }): Promise<void> {
+		const text = input.text.trim().slice(0, 400);
+		if (!text) return;
+		const now = new Date();
+		const existing = await this.manager.query<Array<{ id: string }>>(
+			`SELECT id FROM ${this.table} WHERE bucket = $1 AND lower(text) = lower($2) LIMIT 1`,
+			[input.bucket, text],
+		);
+		if (existing[0]) {
+			await this.manager.query(
+				`UPDATE ${this.table} SET salience = $1, last_seen = $2, status = 'active' WHERE id = $3`,
+				[input.salience, now, existing[0].id],
+			);
+			return;
+		}
+		await this.insert({
+			id: randomUUID(),
+			bucket: input.bucket,
+			text,
+			salience: input.salience,
+			firstSeen: now,
+			lastSeen: now,
+			status: 'active',
+		});
 	}
 }

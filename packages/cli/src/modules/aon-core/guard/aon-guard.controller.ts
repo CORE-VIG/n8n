@@ -1,4 +1,10 @@
-import type { AonGuardApproval, AonGuardOverview, AonGuardPolicy } from '@n8n/api-types';
+import type {
+	AonCouncilClassView,
+	AonCouncilOverview,
+	AonGuardApproval,
+	AonGuardOverview,
+	AonGuardPolicy,
+} from '@n8n/api-types';
 import type { AuthenticatedRequest } from '@n8n/db';
 import type { NextFunction, Response } from 'express';
 import { Delete, Get, Middleware, Param, Post, Put, RestController } from '@n8n/decorators';
@@ -11,6 +17,7 @@ import { AonGuardPolicyRepository } from '../database/repositories/aon-guard-pol
 import { AonSettingsService } from '../settings/aon-settings.service';
 
 import { AonGuardService } from './aon-guard.service';
+import { AonCouncilService } from './council/aon-council.service';
 import { AON_OP_CLASSES } from './op-classes';
 
 const IDENTITY_RE = /^(\*|owner|agent:[a-z0-9._-]+)$/;
@@ -18,9 +25,11 @@ const IDENTITY_RE = /^(\*|owner|agent:[a-z0-9._-]+)$/;
 const putPolicyBody = z.object({
 	identity: z.string().regex(IDENTITY_RE, 'identity must be "*", "owner", or "agent:<slug>"'),
 	opClass: z.string().min(1).max(200),
-	verdict: z.enum(['allow', 'ask', 'deny']),
+	verdict: z.enum(['allow', 'ask', 'deny', 'council']),
 	note: z.string().trim().max(500).optional(),
 });
+
+const putCouncilBody = z.object({ shadowOnly: z.boolean() });
 
 /**
  * Guard's own page: the cards waiting for the owner, every standing policy,
@@ -32,6 +41,7 @@ export class AonGuardController {
 		private readonly guard: AonGuardService,
 		private readonly policies: AonGuardPolicyRepository,
 		private readonly settings: AonSettingsService,
+		private readonly council: AonCouncilService,
 	) {}
 
 	@Middleware()
@@ -90,5 +100,25 @@ export class AonGuardController {
 	): Promise<{ ok: true }> {
 		await this.policies.deleteById(id);
 		return { ok: true };
+	}
+
+	/** Every op class the council has ever ruled on: shadow or live, rulings, agreement, false approvals. */
+	@Get('/council')
+	async councilOverview(): Promise<AonCouncilOverview> {
+		return await this.council.overview();
+	}
+
+	/** The owner's "keep in shadow" switch for one op class. */
+	@Put('/council/:opClass')
+	async putCouncilShadowOnly(
+		req: AuthenticatedRequest,
+		_res: unknown,
+		@Param('opClass') opClass: string,
+	): Promise<AonCouncilClassView> {
+		const parsed = putCouncilBody.safeParse(req.body);
+		if (!parsed.success) {
+			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
+		}
+		return await this.council.setShadowOnly(opClass, parsed.data.shadowOnly);
 	}
 }
