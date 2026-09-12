@@ -314,6 +314,7 @@ onMounted(async () => {
 .section {
 	display: flex;
 	flex-direction: column;
+	gap: var(--spacing--2xs);
 }
 
 .lede {

@@ -8461,7 +8461,6 @@
 	"aon.agent.deliverable.lastRun": "last run {when}",
 	"aon.agent.runs": "Recent runs",
 	"aon.agent.noRuns": "No runs yet.",
-	"aon.agent.noRules": "No learned rules yet.",
 	"aon.agent.breaker": "Breaker tripped {when} after {failures} failures",
 	"aon.run.column.status": "Status",
 	"aon.run.column.deliverable": "Deliverable",
