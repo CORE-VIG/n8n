@@ -8754,7 +8754,7 @@
 	"aon.settings.parts.telegram.notLinked": "Telegram: not linked",
 	"aon.settings.parts.hands.ready": "Hands: ready",
 	"aon.settings.parts.hands.notConfigured": "Hands: not configured",
-	"aon.settings.parts.memory.configured": "Memory: {embedModel} @ {host}",
+	"aon.settings.parts.memory.configured": "Memory: {embedModel} on {host}",
 	"aon.settings.parts.memory.notConfigured": "Memory: no embedding server configured",
 	"aon.settings.parts.executor.running": "Executor: running",
 	"aon.settings.parts.executor.off": "Executor: off",
