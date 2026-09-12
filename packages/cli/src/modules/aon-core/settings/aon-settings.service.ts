@@ -21,19 +21,27 @@ import { NotFoundError } from '@/errors/response-errors/not-found.error';
 import { AonGoogleAuthService } from '../google/aon-google-auth.service';
 import { DEFAULT_AGENT_TIER_CEILING } from '../guard/op-classes';
 import { AonHandsService } from '../hands/aon-hands.service';
+import { AonLocalModelService, DEFAULT_LOCAL_MODEL } from '../models/aon-local-model.service';
 
 const KEY_PERSONA = 'aon.persona';
 const KEY_TALK_MODEL = 'aon.talkModel';
 const KEY_BUDGET = 'aon.budgetEurMonth';
+/** Superseded by `KEY_BACKGROUND_PAID_BUDGET`. No longer read or written by Settings › Aon; the row is left alone for back-compat, never migrated. */
 const KEY_EXTRACT_BUDGET = 'aon.extractBudgetEurMonth';
 const KEY_DISABLED_SKILLS = 'aon.skills.disabled';
 const KEY_GUARD_CARD_SECRET = 'aon.guardCardSecret';
-/** `aon.extractSpentEur.<YYYY-MM>`: this month's counter, one row per month. */
-const EXTRACT_SPENT_PREFIX = 'aon.extractSpentEur.';
 const KEY_MODEL_OF_OWNER = 'aon.modelOfOwner';
 const KEY_DREAM_LAST_RUN_AT = 'aon.dream.lastRunAt';
 /** JSON array of op classes the owner has pinned to shadow, whatever the council's scoreboard says. */
 const KEY_COUNCIL_SHADOW_ONLY = 'aon.council.shadowOnly';
+/** The Ollama model background jobs (extraction, dream, council) run on. */
+const KEY_LOCAL_MODEL = 'aon.localModel';
+/** Background jobs' paid budget, €/month. Defaults to 0: a paid model never touches background work unless the owner raises this above zero. */
+const KEY_BACKGROUND_PAID_BUDGET = 'aon.backgroundPaidEurMonth';
+/** The owner's kill switch for all background work. */
+const KEY_BACKGROUND_JOBS_PAUSED = 'aon.backgroundJobsPaused';
+/** `aon.backgroundSpentEur.<YYYY-MM>`: this month's counter, one row per month. Shared by every paid background step (dream's polish, council's paid member) — extraction never spends. */
+const BACKGROUND_SPENT_PREFIX = 'aon.backgroundSpentEur.';
 
 /** The persona paragraph the assistant's system prompt used to hard-code; still the default until the owner changes it. */
 export const DEFAULT_PERSONA =
@@ -44,7 +52,8 @@ export const AON_MODEL_BANDS = ['haiku', 'sonnet', 'opus'] as const; // the CLI'
 
 export const DEFAULT_BUDGET_EUR_MONTH = 25;
 
-export const DEFAULT_EXTRACT_BUDGET_EUR_MONTH = 5;
+/** Background jobs (extraction, dream, council rulings, observations) run on local models only until the owner raises this above zero. */
+export const DEFAULT_BACKGROUND_PAID_EUR_MONTH = 0;
 
 /** The fork's own skills: always on disk, never uninstalled, shown with a "built in" badge. */
 const BUILT_IN_SKILLS = new Set([
@@ -89,6 +98,7 @@ export class AonSettingsService {
 		private readonly config: GlobalConfig,
 		private readonly hands: AonHandsService,
 		private readonly google: AonGoogleAuthService,
+		private readonly localModelService: AonLocalModelService,
 	) {}
 
 	async persona(): Promise<string> {
@@ -108,35 +118,76 @@ export class AonSettingsService {
 		return Number.isFinite(n) && n >= 0 ? n : DEFAULT_BUDGET_EUR_MONTH;
 	}
 
+	/**
+	 * Superseded by {@link backgroundPaidEurMonth}. Kept only so the old row
+	 * still reads back-compat for anything that stored it; nothing in Aon
+	 * gates on this any more.
+	 */
 	async extractBudgetEurMonth(): Promise<number> {
 		const row = await this.settingsRepository.findByKey(KEY_EXTRACT_BUDGET);
-		if (!row?.value) return DEFAULT_EXTRACT_BUDGET_EUR_MONTH;
+		if (!row?.value) return 0;
 		const n = Number(row.value);
-		return Number.isFinite(n) && n >= 0 && n <= 200 ? n : DEFAULT_EXTRACT_BUDGET_EUR_MONTH;
+		return Number.isFinite(n) && n >= 0 && n <= 200 ? n : 0;
 	}
 
-	/** The current calendar month's key for the extractor's spend counter, e.g. "2026-09". */
-	private extractSpendKey(when: Date = new Date()): string {
-		return `${EXTRACT_SPENT_PREFIX}${when.getUTCFullYear()}-${String(when.getUTCMonth() + 1).padStart(2, '0')}`;
+	/** The Ollama model background jobs (extraction, dream, council) run on. */
+	async localModel(): Promise<string> {
+		const row = await this.settingsRepository.findByKey(KEY_LOCAL_MODEL);
+		return row?.value?.trim() ? row.value.trim() : DEFAULT_LOCAL_MODEL;
 	}
 
-	/** What the extractor has spent this calendar month, in euros. */
-	async extractSpentEurThisMonth(): Promise<number> {
-		const row = await this.settingsRepository.findByKey(this.extractSpendKey());
+	/** Background jobs' paid budget, €/month. 0 (the default) means local models only: a paid model never touches background work. */
+	async backgroundPaidEurMonth(): Promise<number> {
+		const row = await this.settingsRepository.findByKey(KEY_BACKGROUND_PAID_BUDGET);
+		if (!row?.value) return DEFAULT_BACKGROUND_PAID_EUR_MONTH;
+		const n = Number(row.value);
+		return Number.isFinite(n) && n >= 0 && n <= 100 ? n : DEFAULT_BACKGROUND_PAID_EUR_MONTH;
+	}
+
+	/** The owner's kill switch: extraction, dream and council all skip their tick while this is true. */
+	async backgroundJobsPaused(): Promise<boolean> {
+		const row = await this.settingsRepository.findByKey(KEY_BACKGROUND_JOBS_PAUSED);
+		return row?.value === 'true';
+	}
+
+	async setBackgroundJobsPaused(paused: boolean): Promise<void> {
+		await this.settingsRepository.upsert(
+			{ key: KEY_BACKGROUND_JOBS_PAUSED, value: paused ? 'true' : 'false', loadOnStartup: false },
+			['key'],
+		);
+	}
+
+	/** The current calendar month's key for the background-paid spend counter, e.g. "2026-09". */
+	private backgroundSpendKey(when: Date = new Date()): string {
+		return `${BACKGROUND_SPENT_PREFIX}${when.getUTCFullYear()}-${String(when.getUTCMonth() + 1).padStart(2, '0')}`;
+	}
+
+	/** What background jobs (dream's polish, council's paid member) have spent this calendar month, in euros. Extraction never spends: it is local-only. */
+	async backgroundPaidSpentEurThisMonth(): Promise<number> {
+		const row = await this.settingsRepository.findByKey(this.backgroundSpendKey());
 		if (!row?.value) return 0;
 		const n = Number(row.value);
 		return Number.isFinite(n) && n >= 0 ? n : 0;
 	}
 
-	/** Adds `costEur` to this month's extraction spend counter. Read-modify-write: the extractor ticks once a minute, never concurrently. */
-	async addExtractSpend(costEur: number): Promise<void> {
+	/** Adds `costEur` to this month's background-paid spend counter. Read-modify-write: callers tick at most once a minute, never concurrently. Renamed from `addExtractSpend`: one counter now covers every paid background step, not extraction alone. */
+	async addBackgroundSpend(costEur: number): Promise<void> {
 		if (!Number.isFinite(costEur) || costEur <= 0) return;
-		const key = this.extractSpendKey();
-		const current = await this.extractSpentEurThisMonth();
+		const key = this.backgroundSpendKey();
+		const current = await this.backgroundPaidSpentEurThisMonth();
 		await this.settingsRepository.upsert(
 			{ key, value: String(current + costEur), loadOnStartup: false },
 			['key'],
 		);
+	}
+
+	/** Whether a paid model may run a background step right now: the budget is above zero and this month's spend has not reached it yet. */
+	async backgroundPaidAllowed(): Promise<boolean> {
+		const [budget, spent] = await Promise.all([
+			this.backgroundPaidEurMonth(),
+			this.backgroundPaidSpentEurThisMonth(),
+		]);
+		return budget > 0 && spent < budget;
 	}
 
 	/** The model of the owner the dream last wrote, or null before the first dream has ever run. */
@@ -208,6 +259,16 @@ export class AonSettingsService {
 		return this.allowedModels().includes(model);
 	}
 
+	/** The local model list a PUT may pick from: whatever Ollama reports right now. Empty when Ollama did not answer — a PUT is then let through unchecked rather than locked out by a network hiccup. */
+	async allowedLocalModels(): Promise<string[]> {
+		return await this.localModelService.listModels();
+	}
+
+	async isAllowedLocalModel(model: string): Promise<boolean> {
+		const options = await this.allowedLocalModels();
+		return options.length === 0 || options.includes(model);
+	}
+
 	async update(input: AonSettingsUpdate): Promise<void> {
 		if (input.persona !== undefined) {
 			await this.settingsRepository.upsert(
@@ -227,11 +288,20 @@ export class AonSettingsService {
 				['key'],
 			);
 		}
-		if (input.extractBudgetEurMonth !== undefined) {
+		if (input.localModel !== undefined) {
 			await this.settingsRepository.upsert(
-				{ key: KEY_EXTRACT_BUDGET, value: String(input.extractBudgetEurMonth), loadOnStartup: false },
+				{ key: KEY_LOCAL_MODEL, value: input.localModel, loadOnStartup: false },
 				['key'],
 			);
+		}
+		if (input.backgroundPaidEurMonth !== undefined) {
+			await this.settingsRepository.upsert(
+				{ key: KEY_BACKGROUND_PAID_BUDGET, value: String(input.backgroundPaidEurMonth), loadOnStartup: false },
+				['key'],
+			);
+		}
+		if (input.backgroundJobsPaused !== undefined) {
+			await this.setBackgroundJobsPaused(input.backgroundJobsPaused);
 		}
 	}
 
@@ -331,13 +401,17 @@ export class AonSettingsService {
 			.split(',')
 			.map((id) => id.trim())
 			.filter(Boolean);
-		const [model, handsConfigured, executorRunning, extractSpentEur, google] = await Promise.all([
-			this.talkModel(),
-			this.hands.isConfigured(),
-			this.executorRunning(),
-			this.extractSpentEurThisMonth(),
-			this.google.status(user),
-		]);
+		const [model, handsConfigured, executorRunning, google, localModel, localAvailable, backgroundPaidEurMonth, backgroundPaidSpentEur] =
+			await Promise.all([
+				this.talkModel(),
+				this.hands.isConfigured(),
+				this.executorRunning(),
+				this.google.status(user),
+				this.localModel(),
+				this.localModelService.available(),
+				this.backgroundPaidEurMonth(),
+				this.backgroundPaidSpentEurThisMonth(),
+			]);
 		return {
 			assistant: { model, signedIn: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) },
 			telegram: { linked: chatIds.length > 0, chatCount: chatIds.length },
@@ -345,11 +419,11 @@ export class AonSettingsService {
 			memory: {
 				ollamaHost: this.config.aon.ollamaUrl ? hostOnly(this.config.aon.ollamaUrl) : null,
 				embedModel: this.config.aon.embedModel,
-				extractSpentEur,
 			},
 			executor: { running: executorRunning },
 			guard: { tierCeilingDefault: DEFAULT_AGENT_TIER_CEILING },
 			google,
+			models: { localModel, localAvailable, backgroundPaidEurMonth, backgroundPaidSpentEur },
 		};
 	}
 
@@ -367,14 +441,28 @@ export class AonSettingsService {
 	}
 
 	async view(user: User): Promise<AonSettingsView> {
-		const [persona, talkModel, budgetEurMonth, extractBudgetEurMonth, skills, parts] = await Promise.all([
-			this.persona(),
-			this.talkModel(),
-			this.budgetEurMonth(),
-			this.extractBudgetEurMonth(),
-			this.listSkills(),
-			this.parts(user),
-		]);
-		return { persona, talkModel, budgetEurMonth, extractBudgetEurMonth, skills, parts };
+		const [persona, talkModel, budgetEurMonth, localModel, localModelOptions, backgroundPaidEurMonth, backgroundJobsPaused, skills, parts] =
+			await Promise.all([
+				this.persona(),
+				this.talkModel(),
+				this.budgetEurMonth(),
+				this.localModel(),
+				this.allowedLocalModels(),
+				this.backgroundPaidEurMonth(),
+				this.backgroundJobsPaused(),
+				this.listSkills(),
+				this.parts(user),
+			]);
+		return {
+			persona,
+			talkModel,
+			budgetEurMonth,
+			localModel,
+			localModelOptions,
+			backgroundPaidEurMonth,
+			backgroundJobsPaused,
+			skills,
+			parts,
+		};
 	}
 }

@@ -83,6 +83,11 @@ const agentStatusSchema = {
 	status: z.enum(['active', 'paused', 'draft']),
 } satisfies z.ZodRawShape;
 
+const confirmAgentSchema = {
+	slug: z.string().min(1).max(40).describe('The draft agent to activate.'),
+	runFirst: z.boolean().optional().describe('Also queue a run of its first deliverable.'),
+} satisfies z.ZodRawShape;
+
 const runStartSchema = {
 	agent: z.string().min(1).max(40),
 	deliverable: z.string().min(1).max(200).describe('A deliverable id, its slug, or its name.'),
@@ -347,6 +352,31 @@ export class McpAonAgentsToolsService {
 			},
 		};
 
+		const confirmAgent: ToolDefinition<typeof confirmAgentSchema> = {
+			name: 'aon_confirm_agent',
+			config: {
+				description: "Activates a draft agent and, when asked, queues a run of its first deliverable. One call for the old app's confirm-then-run step.",
+				inputSchema: confirmAgentSchema,
+				annotations: { title: 'Confirm an Aon agent', readOnlyHint: false, destructiveHint: false },
+			},
+			handler: async (args, extra) => {
+				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_confirm_agent', args, `Activate agent: ${args.slug}.`);
+					if (blocked) return blocked;
+					await this.authoring.setStatus(args.slug, 'active');
+					if (!args.runFirst) return text(`${args.slug} is now active.`);
+					const detail = await this.authoring.getDetail(args.slug);
+					const first = detail.deliverables[0];
+					if (!first) return text(`${args.slug} is now active. It has no deliverables yet, so nothing was started.`);
+					const run = await this.authoring.startRun(args.slug, first.id, undefined, 'owner');
+					return text(`${args.slug} is now active. Queued run ${run.id} for ${first.name}.`);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		};
+
 		const runStart: ToolDefinition<typeof runStartSchema> = {
 			name: 'aon_run_start',
 			config: {
@@ -401,6 +431,7 @@ export class McpAonAgentsToolsService {
 		registerIfAllowed(agentUpdate);
 		registerIfAllowed(deliverableUpsert);
 		registerIfAllowed(agentStatus);
+		registerIfAllowed(confirmAgent);
 		registerIfAllowed(runStart);
 		registerIfAllowed(runsList);
 	}

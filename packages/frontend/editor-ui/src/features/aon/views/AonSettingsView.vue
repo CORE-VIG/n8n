@@ -1,12 +1,22 @@
 <script setup lang="ts">
-import type { AonSettingsView as AonSettingsViewType, AonSkillInfo } from '@n8n/api-types';
-import { N8nButton, N8nInput, N8nInputNumber, N8nRadioGroup, N8nRadioGroupItem } from '@n8n/design-system';
+import type { AonSettingsView as AonSettingsViewType, AonSkillInfo, AonToolboxList } from '@n8n/api-types';
+import {
+	N8nButton,
+	N8nInput,
+	N8nInputNumber,
+	N8nOption,
+	N8nRadioGroup,
+	N8nRadioGroupItem,
+	N8nSelect,
+	N8nSwitch,
+} from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import AonNav from '../components/AonNav.vue';
 import { getSettings, setSkillEnabled, updateSettings } from '../settings.api';
+import { getToolbox, rescanToolbox } from '../toolbox.api';
 
 /** The three model bands offered here, whatever this instance happens to run on today. */
 const MODEL_BANDS = [
@@ -32,11 +42,20 @@ const skillsError = ref<string | null>(null);
 const persona = ref('');
 const talkModel = ref('');
 const budgetEurMonth = ref(0);
-const extractBudgetEurMonth = ref(0);
+const localModel = ref('');
+const localModelOptions = ref<string[]>([]);
+const backgroundPaidEurMonth = ref(0);
+const backgroundJobsPaused = ref(false);
 
 const saving = ref(false);
 const savedFlash = ref(false);
 const busySkill = ref<string | null>(null);
+const pausing = ref(false);
+const pauseError = ref<string | null>(null);
+
+const toolbox = ref<AonToolboxList | null>(null);
+const toolboxError = ref<string | null>(null);
+const toolboxRescanning = ref(false);
 
 let savedTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -53,7 +72,10 @@ async function load() {
 		persona.value = view.persona;
 		talkModel.value = view.talkModel;
 		budgetEurMonth.value = view.budgetEurMonth;
-		extractBudgetEurMonth.value = view.extractBudgetEurMonth;
+		localModel.value = view.localModel;
+		localModelOptions.value = view.localModelOptions;
+		backgroundPaidEurMonth.value = view.backgroundPaidEurMonth;
+		backgroundJobsPaused.value = view.backgroundJobsPaused;
 		error.value = null;
 	} catch (e) {
 		error.value = errorMessage(e);
@@ -62,7 +84,30 @@ async function load() {
 	}
 }
 
+async function loadToolbox() {
+	try {
+		toolbox.value = await getToolbox(rootStore.restApiContext);
+		toolboxError.value = null;
+	} catch (e) {
+		toolboxError.value = errorMessage(e);
+	}
+}
+
+async function rescan() {
+	if (toolboxRescanning.value) return;
+	toolboxRescanning.value = true;
+	try {
+		await rescanToolbox(rootStore.restApiContext);
+		await loadToolbox();
+	} catch (e) {
+		toolboxError.value = errorMessage(e);
+	} finally {
+		toolboxRescanning.value = false;
+	}
+}
+
 onMounted(load);
+onMounted(loadToolbox);
 onUnmounted(() => {
 	if (savedTimer) clearTimeout(savedTimer);
 });
@@ -84,14 +129,33 @@ async function save() {
 			persona: persona.value,
 			talkModel: talkModel.value,
 			budgetEurMonth: budgetEurMonth.value,
-			extractBudgetEurMonth: extractBudgetEurMonth.value,
+			localModel: localModel.value,
+			backgroundPaidEurMonth: backgroundPaidEurMonth.value,
 		});
 		settings.value = updated;
+		localModelOptions.value = updated.localModelOptions;
 		flashSaved();
 	} catch (e) {
 		error.value = errorMessage(e);
 	} finally {
 		saving.value = false;
+	}
+}
+
+/** The pause switch applies at once: it is a kill switch, not something the owner should have to remember to also press Save for. */
+async function togglePaused() {
+	if (pausing.value) return;
+	const next = !backgroundJobsPaused.value;
+	pausing.value = true;
+	pauseError.value = null;
+	try {
+		const updated = await updateSettings(rootStore.restApiContext, { backgroundJobsPaused: next });
+		settings.value = updated;
+		backgroundJobsPaused.value = updated.backgroundJobsPaused;
+	} catch (e) {
+		pauseError.value = errorMessage(e);
+	} finally {
+		pausing.value = false;
 	}
 }
 
@@ -116,6 +180,7 @@ async function toggleSkill(skill: AonSkillInfo) {
 
 const skills = computed(() => settings.value?.skills ?? []);
 const parts = computed(() => settings.value?.parts ?? null);
+const toolboxItems = computed(() => toolbox.value?.items ?? []);
 </script>
 
 <template>
@@ -130,6 +195,19 @@ const parts = computed(() => settings.value?.parts ?? null);
 		</p>
 
 		<template v-else>
+			<div :class="$style.pauseRow" data-test-id="aon-settings-pause">
+				<N8nSwitch
+					data-test-id="aon-settings-pause-switch"
+					:model-value="backgroundJobsPaused"
+					:disabled="pausing"
+					:label="i18n.baseText('aon.settings.background.paused')"
+					@update:model-value="togglePaused"
+				/>
+				<span v-if="pauseError" :class="$style.error">
+					{{ i18n.baseText('aon.settings.saveFailed', { interpolate: { message: pauseError } }) }}
+				</span>
+				<span v-else :class="$style.hint">{{ i18n.baseText('aon.settings.background.pausedLede') }}</span>
+			</div>
 			<section :class="$style.section" data-test-id="aon-settings-form">
 				<h2 :class="$style.h2">{{ i18n.baseText('aon.settings.persona.title') }}</h2>
 				<p :class="$style.lede">{{ i18n.baseText('aon.settings.persona.lede') }}</p>
@@ -164,15 +242,31 @@ const parts = computed(() => settings.value?.parts ?? null);
 					@update:model-value="(v) => (budgetEurMonth = v ?? 0)"
 				/>
 
-				<p :class="$style.lede">{{ i18n.baseText('aon.settings.extractBudget') }}</p>
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.settings.background.title') }}</h2>
+				<p :class="$style.lede">{{ i18n.baseText('aon.settings.background.lede') }}</p>
+
+				<p :class="$style.fieldLabel">{{ i18n.baseText('aon.settings.background.localModel') }}</p>
+				<p :class="$style.hint">{{ i18n.baseText('aon.settings.background.localModelLede') }}</p>
+				<N8nSelect
+					v-if="localModelOptions.length > 0"
+					:model-value="localModel"
+					data-test-id="aon-settings-local-model"
+					@update:model-value="(v) => (localModel = v ?? localModel)"
+				>
+					<N8nOption v-for="option in localModelOptions" :key="option" :value="option" :label="option" />
+				</N8nSelect>
+				<p v-else :class="$style.hint">{{ i18n.baseText('aon.settings.background.localModelEmpty') }}</p>
+
+				<p :class="$style.fieldLabel">{{ i18n.baseText('aon.settings.background.paidBudget') }}</p>
+				<p :class="$style.hint">{{ i18n.baseText('aon.settings.background.paidBudgetLede') }}</p>
 				<N8nInputNumber
-					:model-value="extractBudgetEurMonth"
+					:model-value="backgroundPaidEurMonth"
 					:min="0"
-					:max="200"
+					:max="100"
 					:precision="0"
 					:controls="false"
-					data-test-id="aon-settings-extract-budget"
-					@update:model-value="(v) => (extractBudgetEurMonth = v ?? 0)"
+					data-test-id="aon-settings-background-budget"
+					@update:model-value="(v) => (backgroundPaidEurMonth = v ?? 0)"
 				/>
 
 				<div :class="$style.saveRow">
@@ -224,6 +318,47 @@ const parts = computed(() => settings.value?.parts ?? null);
 						/>
 					</li>
 				</ul>
+			</section>
+
+			<section :class="$style.section" data-test-id="aon-settings-toolbox">
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.settings.toolbox.title') }}</h2>
+				<p :class="$style.lede">{{ i18n.baseText('aon.settings.toolbox.lede') }}</p>
+
+				<p v-if="toolboxError" :class="$style.error">
+					{{ i18n.baseText('aon.settings.toolbox.failed', { interpolate: { message: toolboxError } }) }}
+				</p>
+				<p v-if="toolbox && toolboxItems.length === 0" :class="$style.lede">
+					{{ i18n.baseText('aon.settings.toolbox.empty') }}
+				</p>
+
+				<ul v-else-if="toolboxItems.length > 0" :class="$style.skillList">
+					<li v-for="item in toolboxItems" :key="item.slug" :class="$style.skillRow">
+						<div :class="$style.skillInfo">
+							<div :class="$style.skillName">
+								{{ item.name }}
+								<span :class="$style.badge">{{ item.kind }}</span>
+								<span v-if="item.away" :class="$style.badge">
+									{{ i18n.baseText('aon.settings.toolbox.missing') }}
+								</span>
+								<span v-if="item.uses > 0" :class="$style.badge">
+									{{ i18n.baseText('aon.settings.toolbox.uses', { interpolate: { count: String(item.uses) } }) }}
+								</span>
+							</div>
+							<p :class="$style.skillDescription">{{ item.summary }}</p>
+						</div>
+					</li>
+				</ul>
+
+				<div :class="$style.saveRow">
+					<N8nButton
+						size="small"
+						variant="outline"
+						:label="i18n.baseText('aon.settings.toolbox.rescan')"
+						:loading="toolboxRescanning"
+						data-test-id="aon-settings-toolbox-rescan"
+						@click="rescan"
+					/>
+				</div>
 			</section>
 
 			<section v-if="parts" :class="$style.section" data-test-id="aon-settings-parts">
@@ -279,6 +414,20 @@ const parts = computed(() => settings.value?.parts ?? null);
 					</li>
 					<li>
 						{{
+							i18n.baseText(
+								parts.models.localAvailable ? 'aon.settings.parts.models.available' : 'aon.settings.parts.models.unavailable',
+								{
+									interpolate: {
+										model: parts.models.localModel,
+										budget: String(parts.models.backgroundPaidEurMonth),
+										spent: parts.models.backgroundPaidSpentEur.toFixed(2),
+									},
+								},
+							)
+						}}
+					</li>
+					<li>
+						{{
 							parts.google.configured
 								? i18n.baseText('aon.settings.parts.google.connected', {
 										interpolate: { email: parts.google.email ?? parts.google.credentialName ?? '' },
@@ -319,6 +468,30 @@ const parts = computed(() => settings.value?.parts ?? null);
 .error {
 	margin: 0;
 	color: var(--color--danger);
+}
+
+.hint {
+	margin: 0;
+	font-size: var(--font-size--2xs);
+	color: var(--color--text--tint-1);
+}
+
+.fieldLabel {
+	margin: var(--spacing--2xs) 0 0;
+	font-weight: var(--font-weight--bold);
+	color: var(--color--text--shade-1);
+}
+
+.pauseRow {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing--sm);
+	flex-wrap: wrap;
+	padding: var(--spacing--sm) var(--spacing--md);
+	border: var(--border);
+	border-radius: var(--radius--lg);
+	background: var(--color--background--light-3);
+	margin-bottom: var(--spacing--sm);
 }
 
 .section {

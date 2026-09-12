@@ -91,6 +91,9 @@ onMounted(() => {
 		<p v-if="dreamMessage" :class="$style.hint">{{ dreamMessage }}</p>
 		<p v-if="model?.updatedAt" :class="$style.hint">
 			{{ i18n.baseText('aon.memory.model.updatedAt', { interpolate: { when: ago(model.updatedAt) } }) }}
+			<template v-if="model.model">
+				— {{ i18n.baseText('aon.memory.model.builtBy', { interpolate: { model: model.model } }) }}
+			</template>
 		</p>
 		<p v-else-if="!loading" :class="$style.hint">{{ i18n.baseText('aon.memory.model.never') }}</p>
 

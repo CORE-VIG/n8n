@@ -14,7 +14,9 @@ const putSettingsBody = z
 		persona: z.string().trim().max(4000).optional(),
 		talkModel: z.string().min(1).max(200).optional(),
 		budgetEurMonth: z.number().min(0).max(1000).optional(),
-		extractBudgetEurMonth: z.number().min(0).max(200).optional(),
+		localModel: z.string().min(1).max(200).optional(),
+		backgroundPaidEurMonth: z.number().min(0).max(100).optional(),
+		backgroundJobsPaused: z.boolean().optional(),
 	})
 	.strict();
 
@@ -44,9 +46,12 @@ export class AonSettingsController {
 		if (!parsed.success) {
 			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
 		}
-		const { talkModel } = parsed.data;
+		const { talkModel, localModel } = parsed.data;
 		if (talkModel !== undefined && !this.settings.isAllowedModel(talkModel)) {
 			throw new BadRequestError(`"${talkModel}" is not one of the models Aon offers.`);
+		}
+		if (localModel !== undefined && !(await this.settings.isAllowedLocalModel(localModel))) {
+			throw new BadRequestError(`"${localModel}" is not one of the models Ollama reports.`);
 		}
 		await this.settings.update(parsed.data);
 		return await this.settings.view(req.user);

@@ -19,6 +19,7 @@ export type * from './aon-google';
 export type * from './aon-threads';
 export * from './aon-guard';
 export type * from './aon-settings';
+export type * from './aon-toolbox';
 export * from './instance-registry-types';
 export type * from './worker-pools';
 export * from './redaction-enforcement';

@@ -25,6 +25,7 @@ export class AonCoreModule implements ModuleInterface {
 		await import('./google/aon-google.controller.js');
 		await import('./voice/aon-voice.controller.js');
 		await import('./settings/aon-settings.controller.js');
+		await import('./toolbox/aon-toolbox.controller.js');
 		const { AonTalkService } = await import('./aon-talk.service.js');
 		await Container.get(AonTalkService).init();
 	}
@@ -36,7 +37,8 @@ export class AonCoreModule implements ModuleInterface {
 		const { AonGuardPolicy } = await import('./database/entities/aon-guard-policy.entity.js');
 		const { AonGuardApproval } = await import('./database/entities/aon-guard-approval.entity.js');
 		const { AonGuardEvent } = await import('./database/entities/aon-guard-event.entity.js');
-		return [AonThread, AonTurn, AonWorkspace, AonGuardPolicy, AonGuardApproval, AonGuardEvent];
+		const { AonToolbox } = await import('./database/entities/aon-toolbox.entity.js');
+		return [AonThread, AonTurn, AonWorkspace, AonGuardPolicy, AonGuardApproval, AonGuardEvent, AonToolbox];
 	}
 
 	async settings() {

@@ -307,7 +307,17 @@ export class AonSourceRepository extends Repository<AonSource> {
 		);
 	}
 
-	async markExtracted(id: string): Promise<void> {
+	/** `meta`, when given, is merged into the source's existing meta (e.g. `{ extractModel: "local:qwen3:4b" }`), never replacing it. */
+	async markExtracted(id: string, meta?: Record<string, unknown>): Promise<void> {
+		if (meta && Object.keys(meta).length > 0) {
+			await this.manager.query(
+				`UPDATE ${this.table} SET extracted_at = CURRENT_TIMESTAMP,
+					meta = COALESCE(meta, '{}'::jsonb) || $2::jsonb
+				WHERE id = $1`,
+				[id, JSON.stringify(meta)],
+			);
+			return;
+		}
 		await this.manager.query(`UPDATE ${this.table} SET extracted_at = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
 	}
 

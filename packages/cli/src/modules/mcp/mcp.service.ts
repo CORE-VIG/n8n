@@ -27,6 +27,7 @@ import { CredentialsService } from '@/credentials/credentials.service';
 import { EventService } from '@/events/event.service';
 import { ExecutionService } from '@/executions/execution.service';
 import { SubworkflowPolicyChecker } from '@/executions/pre-execution-checks/subworkflow-policy-checker';
+import { ALIAS_TARGETS } from '@/modules/aon-core/guard/op-classes';
 import { DataTableProxyService } from '@/modules/data-table/data-table-proxy.service';
 import { NodeCatalogService } from '@/node-catalog';
 import { NodeTypes } from '@/node-types';
@@ -432,9 +433,31 @@ export class McpService {
 		const registerTool = this.createToolRegistrar(server, user, clientInfo, auth);
 		const registerResource = this.createResourceRegistrar(server);
 
-		const registerIfAllowed: RegisterToolFn = (tool) => {
+		const registerToolIfAllowed: RegisterToolFn = (tool) => {
 			if (allowedToolNames && !allowedToolNames.has(tool.name)) return;
 			registerTool(tool);
+		};
+
+		// Old Aon app tool names, kept alive as aliases: every tool registered
+		// through registerIfAllowed also registers, under the old name(s), a
+		// clone with the same schema and handler and an "Alias of ..." note in
+		// its description. ALIAS_TARGETS (op-classes.ts) is the single source of
+		// which old names map to which current tool, so this stays generic and
+		// needs no per-tool code.
+		const registerIfAllowed: RegisterToolFn = (tool) => {
+			registerToolIfAllowed(tool);
+			const aliasNames = ALIAS_TARGETS.get(tool.name);
+			if (!aliasNames) return;
+			for (const aliasName of aliasNames) {
+				registerToolIfAllowed({
+					...tool,
+					name: aliasName,
+					config: {
+						...tool.config,
+						description: `Alias of ${tool.name}; kept from the old Aon app.`,
+					},
+				});
+			}
 		};
 
 		// Existing tools
@@ -652,6 +675,14 @@ export class McpService {
 			// Aon: Settings › Aon and a capability self-description, as tools.
 			const { McpAonSettingsToolsService } = await import('../aon-core/settings/aon-settings-tools.service.js');
 			Container.get(McpAonSettingsToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: the plan (a to-do list kept in the "Aon plan" Data Table) — read, add, move a task, and a day briefing.
+			const { McpAonPlanToolsService } = await import('../aon-core/plan/aon-plan-tools.service.js');
+			Container.get(McpAonPlanToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: the toolbox — skills, scripts, MCP servers and CLIs it can reach for but does not contain.
+			const { McpAonToolboxToolsService } = await import('../aon-core/toolbox/aon-toolbox-tools.service.js');
+			Container.get(McpAonToolboxToolsService).registerTools(registerIfAllowed, user);
 
 			// Aon: the fenced browser on the host (Obscura), offline unless AON_BROWSER_URL is set.
 			const { McpAonBrowserToolsService } = await import('../aon-core/browser/aon-browser-tools.service.js');

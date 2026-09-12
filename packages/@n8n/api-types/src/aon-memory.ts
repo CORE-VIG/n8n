@@ -174,6 +174,8 @@ export interface AonOwnerModel {
 	sources: number;
 	/** Facts (confirmed and pending) the dream that built this model had to work with. */
 	facts: number;
+	/** Which model(s) wrote this: local drafts only ("local:qwen3:4b"), or a local draft polished by one paid haiku turn within budget ("local+haiku"). Absent on a model built before this field existed. */
+	model?: `local:${string}` | 'local+haiku';
 }
 
 /** `POST /aon/memory/dream`: the result of one dream pass, run now. */

@@ -4,6 +4,7 @@ import { Service } from '@n8n/di';
 
 import { AonRunnerService } from '@/modules/aon-agents/executor/aon-runner.service';
 import { costEur } from '@/modules/aon-agents/executor/run-machine';
+import { AonLocalModelService, LocalModelUnavailableError } from '@/modules/aon-core/models/aon-local-model.service';
 
 import { AonGuardApprovalRepository } from '../../database/repositories/aon-guard-approval.repository';
 import { AonGuardEventRepository } from '../../database/repositories/aon-guard-event.repository';
@@ -21,8 +22,15 @@ import {
 	type CouncilRulingRow,
 } from './council-score';
 
-/** The two independent models a ruling is made of; the runner's model aliases, not provider names. */
-const COUNCIL_MODELS = ['haiku', 'sonnet'] as const;
+/**
+ * The paid second judge. Background work — the council's ruling included —
+ * runs on the local model by policy; this one only joins when the owner's
+ * background-paid budget allows it (see `AonSettingsService.backgroundPaidAllowed`).
+ * Below that budget the local judge rules alone: `councilApproveGate` needs
+ * at least two members to ever approve, so a lone local ruling can only ever
+ * be a shadow ruling, never a live decision.
+ */
+const COUNCIL_PAID_MODEL = 'haiku';
 /** Standing rules and decided history are given to the model, never the whole table. */
 const STANDING_RULE_HISTORY = 10;
 /** How far back into the raw event stream a shadow score is willing to look before giving up. */
@@ -138,6 +146,7 @@ export class AonCouncilService {
 		private readonly events: AonGuardEventRepository,
 		private readonly cards: AonGuardCardsService,
 		private readonly runner: AonRunnerService,
+		private readonly localModel: AonLocalModelService,
 		private readonly settings: AonSettingsService,
 		private readonly logger: Logger,
 	) {}
@@ -163,6 +172,7 @@ export class AonCouncilService {
 
 	private async rule(card: AonGuardApproval): Promise<void> {
 		if (isHumanOnly(card.opClass, card.tier)) return;
+		if (await this.settings.backgroundJobsPaused()) return;
 
 		const candidates = [card.identity, '*'];
 		const standing = await this.policies.findFor(candidates);
@@ -198,11 +208,33 @@ export class AonCouncilService {
 		if (live && gate.approve) await this.decideAsLive(card, rules, gate.citedRules);
 	}
 
+	/**
+	 * The local model always rules first. The paid second judge only joins
+	 * when the owner's background-paid budget allows it — below that, the
+	 * local judge's lone answer still records a shadow ruling, but
+	 * `councilApproveGate` never lets fewer than two members approve, so it
+	 * can never decide the card live.
+	 */
 	private async askMembers(prompt: string): Promise<CouncilMemberAnswer[]> {
-		return await Promise.all(COUNCIL_MODELS.map(async (model) => await this.askOne(model, prompt)));
+		const localModelName = await this.settings.localModel();
+		const local = await this.askLocal(localModelName, prompt);
+		if (!(await this.settings.backgroundPaidAllowed())) return [local];
+		const paid = await this.askPaid(COUNCIL_PAID_MODEL, prompt);
+		return [local, paid];
 	}
 
-	private async askOne(model: string, prompt: string): Promise<CouncilMemberAnswer> {
+	private async askLocal(model: string, prompt: string): Promise<CouncilMemberAnswer> {
+		const label = `local:${model}`;
+		try {
+			const result = await this.localModel.chat({ system: SYSTEM_PROMPT, user: prompt, json: true, model, maxTokens: 400 });
+			return parseMemberAnswer(label, result.text);
+		} catch (e) {
+			const message = e instanceof LocalModelUnavailableError ? e.message : e instanceof Error ? e.message : String(e);
+			return { model: label, approve: false, reason: `local model unavailable: ${message}`, citedRule: null };
+		}
+	}
+
+	private async askPaid(model: string, prompt: string): Promise<CouncilMemberAnswer> {
 		const result = await this.runner.run({
 			prompt,
 			systemPrompt: SYSTEM_PROMPT,
@@ -215,7 +247,7 @@ export class AonCouncilService {
 			onEvent: () => {},
 		});
 		const spentEur = costEur(result.costUsd);
-		if (spentEur > 0) await this.settings.addExtractSpend(spentEur);
+		if (spentEur > 0) await this.settings.addBackgroundSpend(spentEur);
 		if (result.isError) {
 			return { model, approve: false, reason: `model error: ${result.error ?? 'unknown'}`, citedRule: null };
 		}

@@ -96,6 +96,8 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	aon_google_status: 'read',
 	aon_threads: 'read',
 	aon_thread: 'read',
+	aon_toolbox: 'read',
+	aon_toolbox_rescan: 'read',
 	voice_status: 'read',
 	browser_status: 'read',
 	memory_overview: 'read',
@@ -106,6 +108,9 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	memory_entities: 'read',
 	memory_observations: 'read',
 	hands_list_workspaces: 'read',
+	aon_state: 'read',
+	plan_tasks: 'read',
+	plan_day: 'read',
 	mail_search: 'mail.read',
 	mail_read: 'mail.read',
 	calendar_list: 'calendar.read',
@@ -132,6 +137,8 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	delete_data_table_column: 'datatable.write',
 	rename_data_table_column: 'datatable.write',
 	add_data_table_rows: 'datatable.write',
+	plan_task_add: 'datatable.write',
+	plan_task_move: 'datatable.write',
 	create_folder: 'project.write',
 	update_folder: 'project.write',
 	move_workflows_to_folder: 'project.write',
@@ -140,6 +147,7 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	revert_agent: 'n8n-agent.write',
 	memory_capture: 'memory.write',
 	memory_page_write: 'memory.write',
+	aon_tool_used: 'memory.write',
 	mail_draft: 'mail.draft',
 	mail_label: 'mail.write',
 	mail_attachment: 'hands.write',
@@ -170,6 +178,7 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	aon_agent_status: 'agent.write',
 	aon_agent_delete: 'agent.write',
 	aon_agent_breaker_reset: 'agent.write',
+	aon_confirm_agent: 'agent.write',
 	guard_decide: 'guard.decide',
 	memory_fact_decide: 'memory.write',
 	aon_settings_set: 'settings.write',
@@ -188,15 +197,60 @@ export function tierOf(opClass: string): number {
 	return AON_OP_CLASSES.find((c) => c.opClass === opClass)?.tier ?? UNKNOWN_TOOL_TIER;
 }
 
-/** The op class a tool call falls under; a hands_run with the network asked for is a network op. */
+/**
+ * Old Aon app tool name -> the tool it now aliases. Registered by
+ * `McpService.getServer` as a same-handler, same-schema clone under the old
+ * name, so anything written for the old Aon app keeps working. `aon_runs`,
+ * `aon_run_report` and `aon_agents` kept their old names outright, so they
+ * need no entry here.
+ */
+export const ALIASES: Record<string, string> = {
+	aon_memory_search: 'memory_search',
+	aon_capture: 'memory_capture',
+	aon_web_read: 'web_read',
+	aon_web_act: 'web_act',
+	aon_mail_send: 'mail_send',
+	aon_calendar_create: 'calendar_create',
+	aon_approvals: 'guard_cards',
+	aon_decide: 'guard_decide',
+	aon_fact_decide: 'memory_fact_decide',
+	aon_dream: 'memory_dream_run',
+	aon_context: 'memory_context',
+	aon_about_me: 'memory_about_me',
+	aon_config: 'aon_settings',
+	aon_configure: 'aon_settings_set',
+	aon_search: 'memory_pages',
+	aon_write_page: 'memory_page_write',
+	aon_council: 'guard_council',
+	aon_create_agent: 'aon_agent_create',
+	aon_flows: 'search_workflows',
+	aon_create_flow: 'create_workflow_from_code',
+	aon_publish_flow: 'publish_workflow',
+	aon_tasks: 'plan_day',
+	aon_task_add: 'plan_task_add',
+};
+
+/** The reverse of ALIASES: a current tool name -> every old name that aliases it. */
+export const ALIAS_TARGETS: ReadonlyMap<string, readonly string[]> = (() => {
+	const targets = new Map<string, string[]>();
+	for (const [oldName, targetName] of Object.entries(ALIASES)) {
+		const existing = targets.get(targetName);
+		if (existing) existing.push(oldName);
+		else targets.set(targetName, [oldName]);
+	}
+	return targets;
+})();
+
+/** The op class a tool call falls under; a hands_run with the network asked for is a network op. An old-app alias resolves to its current tool first. */
 export function opClassOfTool(toolName: string, args?: Record<string, unknown>): AonGuardOpClass {
 	const bare = toolName.replace(/^mcp__n8n__/, '');
-	let opClass = TOOL_OP_CLASS[bare];
-	if (bare === 'hands_run' && args?.network === true) opClass = 'hands.network';
-	if (bare === 'guard_request') opClass = 'read';
-	if (!opClass) return { opClass: `tool:${bare}`, tier: UNKNOWN_TOOL_TIER, label: `Use the ${bare} tool` };
+	const resolved = ALIASES[bare] ?? bare;
+	let opClass = TOOL_OP_CLASS[resolved];
+	if (resolved === 'hands_run' && args?.network === true) opClass = 'hands.network';
+	if (resolved === 'guard_request') opClass = 'read';
+	if (!opClass) return { opClass: `tool:${resolved}`, tier: UNKNOWN_TOOL_TIER, label: `Use the ${resolved} tool` };
 	return AON_OP_CLASSES.find((c) => c.opClass === opClass) ?? { opClass, tier: UNKNOWN_TOOL_TIER, label: opClass };
 }
 
-/** Every tool this instance's MCP server may register, for building a run's allow-list. */
-export const KNOWN_TOOL_NAMES: readonly string[] = Object.keys(TOOL_OP_CLASS);
+/** Every tool this instance's MCP server may register, for building a run's allow-list. Includes the old Aon app's aliases. */
+export const KNOWN_TOOL_NAMES: readonly string[] = [...Object.keys(TOOL_OP_CLASS), ...Object.keys(ALIASES)];

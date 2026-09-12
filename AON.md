@@ -118,7 +118,9 @@ selected capabilities as tools; it does not reason or own work. Every function
 of Aon that the pages offer is also a tool, so the assistant can do from the
 chat whatever the owner can do from a page, within Guard; the only exceptions
 are the card secret, voice audio in and out, and the Telegram bridge, which
-are not tools by design.
+are not tools by design. The old, pre-fork Aon app's tool names still work:
+each is registered as an alias of its current equivalent, same schema and
+handler, so anything written against the old Aon app keeps working unchanged.
 
 **Rule.** A constraint on one actor: standing (written by the owner) or
 learned (promoted from run evidence; canary, then kept or revoked).
@@ -146,35 +148,46 @@ rule says so: the owner sets one identity's policy for one op class to
 reach it. It never rules on money, access, sending mail, writing the
 calendar, acting on a web page, publishing a workflow, or an agent's own
 charter — human-only by code, not by a policy row a standing rule could
-widen, and tier 4 is human-only in general. When it may rule, two
-independent models (haiku and sonnet) each read the card, the identity's
-standing rules and its last ten decided cards, and each must cite a
-standing rule that resolves the case; both must approve and both must cite
-one, or nothing happens. Every op class starts in shadow: the council rules
-and records what it would have done, but the owner still decides every
-card. An op class goes live — the council decides for itself — only once
-its last twenty shadow rulings are decided with zero false approvals (the
-council said yes where the owner said no), and the owner has not pinned it
-back to shadow by hand. A live approval decides the card as `council`, runs
-the same resume path an owner's approval does, and is the only council
-ruling that reaches Telegram. Built (`aon-core/guard/council`).
+widen, and tier 4 is human-only in general. When it may rule, the local
+model always judges first; a second, paid judge (haiku) joins only when the
+background-paid budget allows it (below zero €/month, by default, it never
+does). Each judge that answers reads the card, the identity's standing
+rules and its last ten decided cards, and must cite a standing rule that
+resolves the case; every judge that answered must approve and must cite
+one, or nothing happens — and `councilApproveGate` never approves on fewer
+than two judges, so a lone local ruling can only ever be a shadow ruling.
+Every op class starts in shadow: the council rules and records what it
+would have done, but the owner still decides every card. An op class goes
+live — the council decides for itself — only once its last twenty shadow
+rulings are decided with zero false approvals (the council said yes where
+the owner said no), and the owner has not pinned it back to shadow by hand.
+A live approval decides the card as `council`, runs the same resume path an
+owner's approval does, and is the only council ruling that reaches
+Telegram. Built (`aon-core/guard/council`).
 
 **Memory.** What Aon has read: captured sources → chunks (searched by word and
 by meaning) → facts and entities (extracted). Capture and extraction are its
 only writers; actors ask for a capture, they never write records directly.
 Memory keeps the evidence a learned rule came from; the rule belongs to its
-agent. Search, capture and extraction (a small model, every minute, within
-its own monthly budget; every fact it proposes is pending until the owner
-confirms or rejects it) are built. A page is a source of kind `page`: not
-read once like a capture, but authored by the owner (or written on his
-behalf) and replaced in place by title, the way a note gets updated rather
-than piling up copies. Once a day, the dream rereads the facts, the newest
-sources and the observations and rewrites a five-bucket model of the owner
-(identity, people, projects, preferences, commitments), within the same
-monthly budget, replacing the previous version rather than piling up copies.
-`memory_about_me` and `memory_context` are how an actor reads that model and
-the context around a topic before acting on his life, his people or his
-projects.
+agent. Search, capture and extraction (the local model, every minute; every
+fact it proposes is pending until the owner confirms or rejects it) are
+built. A page is a source of kind `page`: not read once like a capture, but
+authored by the owner (or written on his behalf) and replaced in place by
+title, the way a note gets updated rather than piling up copies. Once a
+day, the dream rereads the facts, the newest sources and the observations
+and rewrites a five-bucket model of the owner (identity, people, projects,
+preferences, commitments) — each bucket built locally, batch by batch when
+its evidence runs long, merged back into one bucket by a final local call —
+replacing the previous version rather than piling up copies. Extraction,
+the dream and the council's rulings are all background work, and background
+work runs on the local model (`aon-core/models`, Ollama) by policy: a paid
+model only ever takes one further reasoning step over what the local model
+already produced — the dream's last polish, the council's second judge —
+and only within the owner's background-paid budget, which defaults to
+zero. A `aon.backgroundJobsPaused` switch on Settings › Aon stops all three
+outright, local spend included. `memory_about_me` and `memory_context` are
+how an actor reads that model and the context around a topic before acting
+on his life, his people or his projects.
 
 **Hands.** The fenced workspace where commands run and files live, for the
 assistant and for agents (and, through the same service, for n8n agents).

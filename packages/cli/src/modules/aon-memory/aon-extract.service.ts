@@ -2,8 +2,7 @@ import { Logger } from '@n8n/backend-common';
 import { Service } from '@n8n/di';
 import { randomUUID } from 'node:crypto';
 
-import { AonRunnerService } from '@/modules/aon-agents/executor/aon-runner.service';
-import { costEur } from '@/modules/aon-agents/executor/run-machine';
+import { AonLocalModelService, LocalModelUnavailableError } from '@/modules/aon-core/models/aon-local-model.service';
 
 import { AonSettingsService } from '../aon-core/settings/aon-settings.service';
 
@@ -13,15 +12,15 @@ import type { AonUnextractedSourceRow } from './database/repositories/aon-source
 import { AonSourceRepository } from './database/repositories/aon-source.repository';
 
 const TICK_MS = 60_000;
-const BATCH_LIMIT = 3;
-/** A `page` source longer than this is skipped: too much to send to a fast model in one turn. */
+/** One source a tick: the local model runs on an 8-CPU box with no GPU, and background work must stay gentle. */
+const BATCH_LIMIT = 1;
+/** A `page` source longer than this is skipped: too much to send to the local model in one turn. */
 const PAGE_CHAR_LIMIT = 20_000;
-/** How much of a source's content actually reaches the model. */
-const CONTENT_CHARS_TO_MODEL = 12_000;
-const EXTRACT_TIMEOUT_MS = 3 * 60_000;
+/** How much of a source's content actually reaches the model: the model prompt (this plus the instructions around it) stays under 6k characters. */
+const CONTENT_CHARS_TO_MODEL = 4_500;
 const ENTITY_KINDS = new Set(['person', 'org', 'place', 'thing', 'concept', 'document', 'event']);
-/** The budget-reached notice is worth repeating occasionally, never once a tick. */
-const BUDGET_LOG_INTERVAL_MS = 60 * 60_000;
+/** The "Ollama is unavailable" notice is worth repeating occasionally, never once a tick. */
+const UNAVAILABLE_LOG_INTERVAL_MS = 60 * 60_000;
 
 type CandidateSource = AonUnextractedSourceRow;
 
@@ -101,6 +100,8 @@ function parseExtraction(text: string | null | undefined): { entities: Extracted
 	return { entities, facts };
 }
 
+const EXTRACT_SYSTEM_PROMPT = 'You extract facts. Answer with one JSON object and nothing else.';
+
 function buildPrompt(source: CandidateSource): string {
 	const date = source.docTime ? source.docTime.toISOString().slice(0, 10) : 'unknown';
 	const body =
@@ -127,22 +128,24 @@ function buildPrompt(source: CandidateSource): string {
 }
 
 /**
- * Memory's writer for facts and entities: every minute, reads a few unread
- * sources through a fast model and turns what it says into pending facts
- * (and the entities they connect), for the owner to confirm or reject on
- * the Memory page. Skipped entirely when there is no runner to call.
+ * Memory's writer for facts and entities: every minute, reads one unread
+ * source through the local model (never a paid one — extraction is
+ * background work, and background work stays on Ollama by policy) and
+ * turns what it says into pending facts (and the entities they connect),
+ * for the owner to confirm or reject on the Memory page. Skipped entirely
+ * when Ollama does not answer, or the owner has paused background work.
  */
 @Service()
 export class AonExtractService {
 	private running = false;
-	/** Wall-clock time of the last "budget reached" log line: once an hour, not once a tick. */
-	private lastBudgetLogAt = 0;
+	/** Wall-clock time of the last "Ollama unavailable" log line: once an hour, not once a tick. */
+	private lastUnavailableLogAt = 0;
 
 	constructor(
 		private readonly entities: AonEntityRepository,
 		private readonly facts: AonFactRepository,
 		private readonly sources: AonSourceRepository,
-		private readonly runner: AonRunnerService,
+		private readonly localModel: AonLocalModelService,
 		private readonly settings: AonSettingsService,
 		private readonly logger: Logger,
 	) {}
@@ -153,25 +156,22 @@ export class AonExtractService {
 
 	async tick(): Promise<void> {
 		if (this.running) return;
-		if (!process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return;
+		if (await this.settings.backgroundJobsPaused()) return;
+		if (!(await this.localModel.available())) {
+			this.logUnavailable();
+			return;
+		}
 		this.running = true;
 		try {
-			const budget = await this.settings.extractBudgetEurMonth();
-			let spent = await this.settings.extractSpentEurThisMonth();
+			const model = await this.settings.localModel();
 			const candidates = await this.sources.listUnextracted(BATCH_LIMIT);
 			for (const source of candidates) {
-				if (spent >= budget) {
-					this.logBudgetReached(spent, budget);
-					break;
-				}
 				if (source.kind === 'page' && source.content.length > PAGE_CHAR_LIMIT) {
 					await this.sources.markSkipped(source.id, 'too long for extraction');
 					this.logger.info(`Aon memory extractor: skipped ${source.id} (${source.title}), too long to extract`);
 					continue;
 				}
-				const outcome = await this.extractOne(source);
-				if (outcome === 'runner-unavailable') break;
-				spent = await this.settings.extractSpentEurThisMonth();
+				await this.extractOne(source, model);
 			}
 		} catch (e) {
 			this.logger.error(`Aon memory extractor tick failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -181,48 +181,38 @@ export class AonExtractService {
 	}
 
 	/** Logged at most once an hour: the tick runs every minute and would otherwise repeat this every time. */
-	private logBudgetReached(spent: number, budget: number): void {
+	private logUnavailable(): void {
 		const now = Date.now();
-		if (now - this.lastBudgetLogAt < BUDGET_LOG_INTERVAL_MS) return;
-		this.lastBudgetLogAt = now;
-		this.logger.info(
-			`Aon memory extractor: this month's spend (€${spent.toFixed(4)}) has reached the €${budget} extraction budget; pausing until next month or a higher budget`,
-		);
+		if (now - this.lastUnavailableLogAt < UNAVAILABLE_LOG_INTERVAL_MS) return;
+		this.lastUnavailableLogAt = now;
+		this.logger.info('Aon memory extractor: the local model (Ollama) is unavailable; skipping this tick');
 	}
 
-	private async extractOne(source: CandidateSource): Promise<'done' | 'runner-unavailable'> {
-		const result = await this.runner.run({
-			prompt: buildPrompt(source),
-			systemPrompt: 'You extract facts. Answer with one JSON object and nothing else.',
-			model: 'haiku',
-			allowedTools: [],
-			mcpConfigPath: null,
-			maxTurns: 1,
-			timeoutMs: EXTRACT_TIMEOUT_MS,
-			signal: new AbortController().signal,
-			onEvent: () => {},
-		});
-
-		if (result.isError && result.error?.startsWith('could not start claude')) {
-			this.logger.warn(`Aon memory extractor: the runner is unavailable (${result.error}); pausing this pass`);
-			return 'runner-unavailable';
+	private async extractOne(source: CandidateSource, model: string): Promise<void> {
+		let text: string;
+		try {
+			const result = await this.localModel.chat({
+				system: EXTRACT_SYSTEM_PROMPT,
+				user: buildPrompt(source),
+				json: true,
+				model,
+				maxTokens: 900,
+			});
+			text = result.text;
+		} catch (e) {
+			if (e instanceof LocalModelUnavailableError) {
+				this.logger.warn(`Aon memory extractor: local model unavailable mid-tick (${e.message}); leaving ${source.id} for next time`);
+				return;
+			}
+			throw e;
 		}
 
-		const spentEur = costEur(result.costUsd);
-		if (spentEur > 0) await this.settings.addExtractSpend(spentEur);
-
-		let inserted = 0;
-		if (!result.isError) {
-			const { entities, facts } = parseExtraction(result.text);
-			inserted = await this.applyExtraction(source, entities, facts);
-		}
-		await this.sources.markExtracted(source.id);
+		const { entities, facts } = parseExtraction(text);
+		const inserted = await this.applyExtraction(source, entities, facts);
+		await this.sources.markExtracted(source.id, { extractModel: `local:${model}` });
 		this.logger.info(
-			`Aon memory extractor: source ${source.id} (${source.title}) -> ${inserted} fact(s), ` +
-				`€${spentEur.toFixed(4)}` +
-				(result.isError ? `, model error: ${result.error}` : ''),
+			`Aon memory extractor: source ${source.id} (${source.title}) -> ${inserted} fact(s), local:${model}`,
 		);
-		return 'done';
 	}
 
 	private async applyExtraction(

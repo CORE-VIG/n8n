@@ -221,6 +221,16 @@ export class AonRunRepository extends Repository<AonRun> {
 		return rows[0]?.sum ?? 0;
 	}
 
+	/** Every agent's spend today, at list price, in euros. For `aon_state`'s one-call orientation. */
+	async sumCostEurToday(): Promise<number> {
+		const rows = await this.manager.query<Array<{ sum: number | null }>>(
+			`SELECT COALESCE(sum(cost_eur), 0)::float8 AS sum
+			FROM ${this.table(AonRun)}
+			WHERE created_at >= date_trunc('day', CURRENT_TIMESTAMP)`,
+		);
+		return rows[0]?.sum ?? 0;
+	}
+
 	async createQueued(input: {
 		id: string;
 		deliverableId: string;
