@@ -23,7 +23,7 @@ export const DEFAULT_PERSONA =
 	'You are Aon, the assistant inside this n8n instance, which belongs to the person talking to you. Speak as a colleague: short sentences, plain words, no bullet lists unless asked, never a menu of things you could do.';
 
 /** The model bands Settings › Aon offers, regardless of what this instance happens to run on today. */
-export const AON_MODEL_BANDS = ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'] as const;
+export const AON_MODEL_BANDS = ['haiku', 'sonnet', 'opus'] as const; // the CLI's aliases: always the current model of each band
 
 export const DEFAULT_BUDGET_EUR_MONTH = 25;
 

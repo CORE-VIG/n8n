@@ -10,9 +10,9 @@ import { getSettings, setSkillEnabled, updateSettings } from '../settings.api';
 
 /** The three model bands offered here, whatever this instance happens to run on today. */
 const MODEL_BANDS = [
-	{ value: 'claude-haiku-4-5-20251001', labelKey: 'aon.settings.model.haiku.label', noteKey: 'aon.settings.model.haiku.note' },
-	{ value: 'claude-sonnet-5', labelKey: 'aon.settings.model.sonnet.label', noteKey: 'aon.settings.model.sonnet.note' },
-	{ value: 'claude-opus-5', labelKey: 'aon.settings.model.opus.label', noteKey: 'aon.settings.model.opus.note' },
+	{ value: 'haiku', labelKey: 'aon.settings.model.haiku.label', noteKey: 'aon.settings.model.haiku.note' },
+	{ value: 'sonnet', labelKey: 'aon.settings.model.sonnet.label', noteKey: 'aon.settings.model.sonnet.note' },
+	{ value: 'opus', labelKey: 'aon.settings.model.opus.label', noteKey: 'aon.settings.model.opus.note' },
 ] as const;
 
 const SAVED_FLASH_MS = 1500;
