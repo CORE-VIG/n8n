@@ -632,6 +632,12 @@ export class McpService {
 			);
 		}
 
+		// Aon: the assistant's hands (a fenced workspace on the host) as tools of this instance.
+		if (this.moduleRegistry.isActive('aon-core')) {
+			const { McpAonHandsToolsService } = await import('../aon-core/hands/aon-hands-tools.service.js');
+			await Container.get(McpAonHandsToolsService).registerTools(registerIfAllowed, user);
+		}
+
 		return server;
 	}
 

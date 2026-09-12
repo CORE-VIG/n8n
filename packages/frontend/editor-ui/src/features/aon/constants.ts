@@ -19,4 +19,9 @@ export const AON_DOING: Record<string, { now: string; done: string }> = {
 	mcp__n8n__search_workflow_executions: { now: 'Reading executions', done: 'Read executions' },
 	mcp__n8n__get_workflow_execution: { now: 'Reading the execution', done: 'Read the execution' },
 	mcp__n8n__list_credentials: { now: 'Reading your credentials', done: 'Read your credentials' },
+	mcp__n8n__hands_run: { now: 'Running a command', done: 'Ran a command' },
+	mcp__n8n__hands_write_file: { now: 'Writing a file', done: 'Wrote a file' },
+	mcp__n8n__hands_read_file: { now: 'Reading a file', done: 'Read a file' },
+	mcp__n8n__hands_list_files: { now: 'Listing files', done: 'Listed files' },
+	mcp__n8n__hands_delete: { now: 'Deleting a file', done: 'Deleted a file' },
 };
