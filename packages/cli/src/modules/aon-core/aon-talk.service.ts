@@ -104,7 +104,10 @@ export class AonTalkService {
 
 	private childEnv(): NodeJS.ProcessEnv {
 		// No API key reaches the child on purpose: it authenticates as the
-		// subscription seat from its own home, exactly as the old daemon did.
+		// subscription seat. The long-lived token from `claude setup-token` is
+		// the way a headless seat is meant to sign in; a copied browser login
+		// dies the moment the other copy refreshes it.
+		const token = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
 		return {
 			// claudeHome is the `.claude` directory; the CLI wants HOME to be its
 			// parent and finds `.claude/` and `.claude.json` under it itself.
@@ -112,6 +115,7 @@ export class AonTalkService {
 			PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
 			LANG: process.env.LANG ?? 'C.UTF-8',
 			DISABLE_AUTOUPDATER: '1',
+			...(token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}),
 		};
 	}
 
