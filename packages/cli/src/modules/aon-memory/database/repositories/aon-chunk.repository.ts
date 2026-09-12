@@ -1,6 +1,7 @@
 import type { AonMemoryHit } from '@n8n/api-types';
 import { Service } from '@n8n/di';
 import { DataSource, Not, IsNull, Repository } from '@n8n/typeorm';
+import { randomUUID } from 'node:crypto';
 
 import { AonChunk } from '../entities/aon-chunk.entity';
 import { AonSource } from '../entities/aon-source.entity';
@@ -70,5 +71,44 @@ export class AonChunkRepository extends Repository<AonChunk> {
 			[vector, limit],
 		);
 		return rows.map(toHit);
+	}
+
+	/** Stores a source's pieces in order, ready to embed. */
+	async insertMany(
+		sourceId: string,
+		chunks: Array<{ seq: number; text: string; tokens: number }>,
+	): Promise<Array<{ id: string; seq: number; text: string }>> {
+		if (chunks.length === 0) return [];
+		const createdAt = new Date();
+		const rows = chunks.map((chunk) => ({
+			id: randomUUID(),
+			sourceId,
+			seq: chunk.seq,
+			text: chunk.text,
+			tokens: chunk.tokens,
+			createdAt,
+		}));
+		await this.insert(rows);
+		return rows.map(({ id, seq, text }) => ({ id, seq, text }));
+	}
+
+	/** Chunks capture could not embed inline, oldest first. */
+	async listPendingEmbedding(limit: number): Promise<Array<{ id: string; text: string }>> {
+		return await this.manager.query<Array<{ id: string; text: string }>>(
+			`SELECT id, text FROM ${this.chunks}
+			WHERE embedded_at IS NULL
+			ORDER BY created_at
+			LIMIT $1`,
+			[limit],
+		);
+	}
+
+	async setEmbedding(id: string, embedding: number[]): Promise<void> {
+		const vector = `[${embedding.join(',')}]`;
+		await this.manager.query(
+			`UPDATE ${this.chunks} SET embedding = $1::vector, embedded_at = CURRENT_TIMESTAMP
+			WHERE id = $2`,
+			[vector, id],
+		);
 	}
 }

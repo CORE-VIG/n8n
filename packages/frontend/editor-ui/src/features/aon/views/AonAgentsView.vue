@@ -7,7 +7,8 @@ import { onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 
 import { getAgents } from '../aon.api';
-import { AON_AGENT_VIEW, AON_HOME_VIEW } from '../constants';
+import AonNav from '../components/AonNav.vue';
+import { AON_AGENT_VIEW } from '../constants';
 import { statusTheme } from '../status';
 import { useAonTime } from '../useAonTime';
 
@@ -29,9 +30,7 @@ onMounted(async () => {
 
 <template>
 	<div :class="$style.page">
-		<RouterLink :to="{ name: AON_HOME_VIEW }" :class="$style.back">
-			{{ i18n.baseText('aon.title') }}
-		</RouterLink>
+		<AonNav />
 		<h1 :class="$style.title">{{ i18n.baseText('aon.agents.title') }}</h1>
 		<p :class="$style.lede">{{ i18n.baseText('aon.agents.lede') }}</p>
 

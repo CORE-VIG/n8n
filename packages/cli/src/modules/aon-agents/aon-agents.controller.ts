@@ -1,8 +1,15 @@
-import type { AonAgentDetail, AonAgentsOverview, AonRunSummary } from '@n8n/api-types';
+import type {
+	AonAgentDetail,
+	AonAgentsOverview,
+	AonRunDetail,
+	AonRunList,
+} from '@n8n/api-types';
 import type { AuthenticatedRequest } from '@n8n/db';
-import { Get, Param, RestController } from '@n8n/decorators';
+import type { NextFunction, Response } from 'express';
+import { Get, Middleware, Param, RestController } from '@n8n/decorators';
 
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
+import { aonOwnerOnly } from '@/modules/aon-core/aon-owner';
 
 import { charterView } from './charter-view';
 import { AonAgentRepository } from './database/repositories/aon-agent.repository';
@@ -10,7 +17,12 @@ import { AonDeliverableRepository } from './database/repositories/aon-deliverabl
 import { AonLearnedRuleRepository } from './database/repositories/aon-learned-rule.repository';
 import { AonRunRepository } from './database/repositories/aon-run.repository';
 
-type RunsRequest = AuthenticatedRequest<{}, {}, {}, { agent?: string; limit?: string }>;
+type RunsRequest = AuthenticatedRequest<
+	{},
+	{},
+	{},
+	{ agent?: string; status?: string; limit?: string; offset?: string }
+>;
 
 const RUNS_PER_AGENT = 20;
 const RUNS_DEFAULT = 50;
@@ -24,6 +36,11 @@ export class AonAgentsController {
 		private readonly runs: AonRunRepository,
 		private readonly rules: AonLearnedRuleRepository,
 	) {}
+
+	@Middleware()
+	ownerOnly(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+		aonOwnerOnly(req, res, next);
+	}
 
 	@Get('/overview')
 	async overview(): Promise<AonAgentsOverview> {
@@ -74,11 +91,35 @@ export class AonAgentsController {
 export class AonRunsController {
 	constructor(private readonly runs: AonRunRepository) {}
 
+	@Middleware()
+	ownerOnly(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+		aonOwnerOnly(req, res, next);
+	}
+
 	@Get('/')
-	async list(req: RunsRequest): Promise<AonRunSummary[]> {
+	async list(req: RunsRequest): Promise<AonRunList> {
 		const agentId = typeof req.query.agent === 'string' ? req.query.agent : undefined;
-		const asked = Number(req.query.limit);
-		const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, RUNS_MAX) : RUNS_DEFAULT;
-		return await this.runs.listRecent({ agentId, limit });
+		const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+		const askedLimit = Number(req.query.limit);
+		const limit =
+			Number.isFinite(askedLimit) && askedLimit > 0 ? Math.min(askedLimit, RUNS_MAX) : RUNS_DEFAULT;
+		const askedOffset = Number(req.query.offset);
+		const offset = Number.isFinite(askedOffset) && askedOffset > 0 ? askedOffset : 0;
+		const [{ items, total }, byStatus] = await Promise.all([
+			this.runs.list({ agentId, status, limit, offset }),
+			this.runs.countByStatus(),
+		]);
+		return { items, total, byStatus };
+	}
+
+	@Get('/:id')
+	async get(
+		_req: AuthenticatedRequest,
+		_res: unknown,
+		@Param('id') id: string,
+	): Promise<AonRunDetail> {
+		const run = await this.runs.findDetail(id);
+		if (!run) throw new NotFoundError(`There is no run with the id ${id}.`);
+		return run;
 	}
 }

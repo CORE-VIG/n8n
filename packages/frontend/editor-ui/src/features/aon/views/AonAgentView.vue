@@ -7,6 +7,7 @@ import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import { getAgent } from '../aon.api';
+import AonNav from '../components/AonNav.vue';
 import { AON_AGENTS_VIEW } from '../constants';
 import { statusTheme } from '../status';
 import { useAonTime } from '../useAonTime';
@@ -86,6 +87,7 @@ onMounted(async () => {
 
 <template>
 	<div :class="$style.page">
+		<AonNav />
 		<RouterLink :to="{ name: AON_AGENTS_VIEW }" :class="$style.back">
 			{{ i18n.baseText('aon.agent.back') }}
 		</RouterLink>

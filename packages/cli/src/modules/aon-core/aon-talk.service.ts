@@ -1,3 +1,4 @@
+import type { AonTurnTool } from '@n8n/api-types';
 import { Logger } from '@n8n/backend-common';
 import { GlobalConfig } from '@n8n/config';
 import type { User } from '@n8n/db';
@@ -9,6 +10,9 @@ import { createInterface } from 'node:readline';
 
 import { McpServerApiKeyService } from '@/modules/mcp/mcp-api-key.service';
 import { McpSettingsService } from '@/modules/mcp/mcp.settings.service';
+
+import { AonThreadRepository } from './database/repositories/aon-thread.repository';
+import { AonTurnRepository } from './database/repositories/aon-turn.repository';
 
 export type Frame = Record<string, unknown>;
 export type Write = (frame: Frame) => void;
@@ -47,6 +51,8 @@ export class AonTalkService {
 		private readonly logger: Logger,
 		private readonly mcpApiKeys: McpServerApiKeyService,
 		private readonly mcpSettings: McpSettingsService,
+		private readonly threads: AonThreadRepository,
+		private readonly turns: AonTurnRepository,
 	) {}
 
 	async init() {
@@ -132,18 +138,87 @@ export class AonTalkService {
 			session = { claudeSessionId: null, busy: false, userId: input.user.id };
 			this.sessions.set(k, session);
 		}
-		if (input.reset) session.claudeSessionId = null;
 		if (session.busy) {
 			write({ type: 'error', message: 'Still answering the last message. Wait for it, or stop it.' });
 			return;
 		}
 		session.busy = true;
 		const started = Date.now();
+
+		// What this turn will become in the saved conversation, gathered as the
+		// frames go by so it can be written once the turn ends either way.
+		let turnText = '';
+		let costUsd = 0;
+		const tools = new Map<string, AonTurnTool>();
+		const wrappedWrite: Write = (frame) => {
+			write(frame);
+			if (frame.type === 'text' && typeof frame.delta === 'string') {
+				turnText += frame.delta;
+			} else if (
+				frame.type === 'tool' &&
+				typeof frame.id === 'string' &&
+				typeof frame.name === 'string'
+			) {
+				const status = frame.status;
+				if (status === 'start' || status === 'ok' || status === 'error') {
+					tools.set(frame.id, { id: frame.id, name: frame.name, status });
+				}
+			} else if (frame.type === 'session') {
+				const id = typeof frame.id === 'string' ? frame.id : null;
+				this.threads.setClaudeSession(input.sessionId, id).catch((e: unknown) => {
+					this.logger.warn(
+						`[aon] could not save the assistant's session id: ${e instanceof Error ? e.message : String(e)}`,
+					);
+				});
+			} else if (frame.type === 'cost' && typeof frame.usd === 'number') {
+				costUsd = frame.usd;
+			} else if (frame.type === 'error' && typeof frame.message === 'string') {
+				turnText += (turnText ? '\n' : '') + frame.message;
+			}
+		};
+
+		// Does the thread already have a row, and is it his? The client picks
+		// the id, so an existing row must already be his — ensure() is what
+		// keeps one user from resuming another user's conversation this way.
+		let threadReady = false;
 		try {
+			const thread = await this.threads.ensure(input.sessionId, input.user.id);
+			threadReady = true;
+			if (input.reset) {
+				session.claudeSessionId = null;
+				await this.threads.setClaudeSession(input.sessionId, null);
+			} else {
+				// The in-memory map is only a cache; the row is the source of
+				// truth and is what survives a restart.
+				session.claudeSessionId = thread.claudeSessionId ?? session.claudeSessionId;
+			}
+			await this.turns.addTurn({
+				threadId: input.sessionId,
+				role: 'user',
+				text: input.text,
+				tools: null,
+				costUsd: 0,
+			});
 			const mcpConfig = await this.writeMcpConfig(input.user);
-			await this.run(session, input.text, mcpConfig, write, signal);
+			await this.run(session, input.text, mcpConfig, wrappedWrite, signal);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			turnText += (turnText ? '\n' : '') + message;
+			throw error;
 		} finally {
 			session.busy = false;
+			if (threadReady) {
+				await this.turns.addTurn({
+					threadId: input.sessionId,
+					role: 'assistant',
+					text: turnText,
+					tools: tools.size ? [...tools.values()] : null,
+					costUsd,
+				});
+				await this.threads.touchLastTurn(input.sessionId);
+				const title = titleFrom(input.text);
+				if (title) await this.threads.setTitleIfEmpty(input.sessionId, title);
+			}
 			write({ type: 'done', ms: Date.now() - started });
 		}
 	}
@@ -275,6 +350,15 @@ export class AonTalkService {
 			if (typeof ev.total_cost_usd === 'number') write({ type: 'cost', usd: ev.total_cost_usd, notional: true });
 		}
 	}
+}
+
+/** The first 60 characters of a message, cut at a word, for a thread's title. */
+function titleFrom(text: string): string {
+	const trimmed = text.trim().replace(/\s+/g, ' ');
+	if (trimmed.length <= 60) return trimmed;
+	const cut = trimmed.slice(0, 60);
+	const lastSpace = cut.lastIndexOf(' ');
+	return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
 }
 
 function resultText(content: unknown): string {

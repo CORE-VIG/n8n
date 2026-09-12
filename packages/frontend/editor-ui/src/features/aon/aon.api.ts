@@ -5,7 +5,10 @@ import type {
 	AonMemoryOverview,
 	AonMemorySearchMode,
 	AonMemorySearchResult,
-	AonRunSummary,
+	AonRunList,
+	AonSourceList,
+	AonThreadSummary,
+	AonWorkspaceSummary,
 } from '@n8n/api-types';
 import type { IRestApiContext } from '@n8n/rest-api-client';
 import { makeRestApiRequest } from '@n8n/rest-api-client';
@@ -26,8 +29,24 @@ export async function getAgent(ctx: IRestApiContext, slug: string) {
 	);
 }
 
-export async function getRuns(ctx: IRestApiContext, params: { agent?: string; limit?: number }) {
-	return await makeRestApiRequest<AonRunSummary[]>(ctx, 'GET', '/aon/runs', params);
+export async function getRuns(
+	ctx: IRestApiContext,
+	params: { agent?: string; status?: string; limit?: number; offset?: number },
+) {
+	return await makeRestApiRequest<AonRunList>(ctx, 'GET', '/aon/runs', params);
+}
+
+/** The Home page's four "latest" lists, each its own call so one failing leaves the others up. */
+export async function getRecentSources(ctx: IRestApiContext, limit = 5) {
+	return await makeRestApiRequest<AonSourceList>(ctx, 'GET', '/aon/memory/sources', { limit });
+}
+
+export async function getWorkspaces(ctx: IRestApiContext) {
+	return await makeRestApiRequest<AonWorkspaceSummary[]>(ctx, 'GET', '/aon/hands/workspaces');
+}
+
+export async function getThreads(ctx: IRestApiContext) {
+	return await makeRestApiRequest<AonThreadSummary[]>(ctx, 'GET', '/aon/threads');
 }
 
 export async function getMemoryOverview(ctx: IRestApiContext) {

@@ -1,3 +1,4 @@
+import type { AonThreadSummary } from '@n8n/api-types';
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { streamRequest } from '@n8n/rest-api-client';
@@ -5,6 +6,7 @@ import { useRootStore } from '@n8n/stores/useRootStore';
 import type { ChatUI } from '@n8n/design-system';
 
 import { AON_DOING } from '../constants';
+import { createThread, deleteThread, getThread, listThreads } from '../threads.api';
 
 type Frame =
 	| { type: 'session'; id: string | null }
@@ -21,6 +23,14 @@ function newSessionId() {
 	return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function saveSessionId(id: string) {
+	try {
+		window.localStorage.setItem(SESSION_KEY, id);
+	} catch {
+		/* private mode */
+	}
+}
+
 function loadSessionId(): string {
 	try {
 		const v = window.localStorage.getItem(SESSION_KEY);
@@ -29,11 +39,7 @@ function loadSessionId(): string {
 		/* private mode */
 	}
 	const id = newSessionId();
-	try {
-		window.localStorage.setItem(SESSION_KEY, id);
-	} catch {
-		/* private mode */
-	}
+	saveSessionId(id);
 	return id;
 }
 
@@ -60,6 +66,11 @@ export const useAonAssistantStore = defineStore('aonAssistant', () => {
 	const messages = ref<ChatUI.AssistantMessage[]>([]);
 	/** The last workflow it made or changed, so the window can open it. */
 	const lastWorkflowId = ref<string | null>(null);
+	/** The saved conversations, and whether the window is showing that list instead of the chat. */
+	const threads = ref<AonThreadSummary[]>([]);
+	const loadingThreads = ref(false);
+	const loadingHistory = ref(false);
+	const listOpen = ref(false);
 	let seq = 0;
 	const nextId = () => `aon-${Date.now()}-${seq++}`;
 
@@ -68,6 +79,7 @@ export const useAonAssistantStore = defineStore('aonAssistant', () => {
 	function open() {
 		isOpen.value = true;
 		unread.value = 0;
+		void restoreHistory();
 	}
 	function close() {
 		isOpen.value = false;
@@ -81,14 +93,77 @@ export const useAonAssistantStore = defineStore('aonAssistant', () => {
 		messages.value = [...messages.value, m];
 	}
 
-	function startNew() {
+	async function loadThreads() {
+		loadingThreads.value = true;
+		try {
+			threads.value = await listThreads(rootStore.restApiContext);
+		} catch {
+			threads.value = [];
+		} finally {
+			loadingThreads.value = false;
+		}
+	}
+
+	/** Switches to a saved thread and rebuilds its messages the way `send` would have produced them. */
+	async function openThread(id: string) {
+		sessionId.value = id;
+		saveSessionId(id);
 		messages.value = [];
 		lastWorkflowId.value = null;
-		sessionId.value = newSessionId();
+		listOpen.value = false;
+		loadingHistory.value = true;
 		try {
-			window.localStorage.setItem(SESSION_KEY, sessionId.value);
+			const detail = await getThread(rootStore.restApiContext, id);
+			const rebuilt: ChatUI.AssistantMessage[] = [];
+			for (const turn of detail.turns) {
+				if (turn.role === 'user') {
+					rebuilt.push({ id: nextId(), role: 'user', type: 'text', content: turn.text });
+					continue;
+				}
+				for (const tool of turn.tools ?? []) {
+					rebuilt.push({
+						id: nextId(),
+						role: 'assistant',
+						type: 'block',
+						title: toolWords(tool.name, tool.status),
+						content: '',
+					});
+				}
+				rebuilt.push({ id: nextId(), role: 'assistant', type: 'text', content: turn.text });
+			}
+			messages.value = rebuilt;
 		} catch {
-			/* private mode */
+			// An id from before threads existed (404), or a transient failure:
+			// start blank rather than block the window on it.
+		} finally {
+			loadingHistory.value = false;
+		}
+	}
+
+	/** After a reload the window keeps its session id but not its messages; fetch them back once. */
+	function restoreHistory() {
+		if (messages.value.length > 0 || loadingHistory.value) return;
+		return openThread(sessionId.value);
+	}
+
+	async function startNew() {
+		messages.value = [];
+		lastWorkflowId.value = null;
+		let id: string;
+		try {
+			id = (await createThread(rootStore.restApiContext)).id;
+		} catch {
+			id = newSessionId();
+		}
+		sessionId.value = id;
+		saveSessionId(id);
+	}
+
+	async function removeThread(id: string) {
+		await deleteThread(rootStore.restApiContext, id);
+		threads.value = threads.value.filter((t) => t.id !== id);
+		if (sessionId.value === id) {
+			await startNew();
 		}
 	}
 
@@ -166,5 +241,26 @@ export const useAonAssistantStore = defineStore('aonAssistant', () => {
 		if (!isOpen.value) unread.value += 1;
 	}
 
-	return { isOpen, streaming, unread, sessionId, messages, hasMessages, lastWorkflowId, open, close, toggle, send, startNew };
+	return {
+		isOpen,
+		streaming,
+		unread,
+		sessionId,
+		messages,
+		hasMessages,
+		lastWorkflowId,
+		threads,
+		loadingThreads,
+		loadingHistory,
+		listOpen,
+		open,
+		close,
+		toggle,
+		send,
+		startNew,
+		loadThreads,
+		openThread,
+		removeThread,
+		restoreHistory,
+	};
 });
