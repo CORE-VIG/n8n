@@ -6,7 +6,7 @@ export class AonThread extends BaseEntity {
 	@PrimaryColumn({ type: 'text' })
 	id: string;
 
-	@Column({ type: 'varchar', length: 36, name: 'user_id' })
+	@Column({ type: 'uuid', name: 'user_id' })
 	userId: string;
 
 	@Column({ type: 'text', nullable: true })

@@ -12,7 +12,7 @@ export class CreateAonThreadsAndWorkspaces1789200000000 implements IrreversibleM
 
 		await runQuery(`CREATE TABLE ${t('aon_threads')} (
 			id text PRIMARY KEY,
-			user_id varchar(36) NOT NULL REFERENCES ${user} (id) ON DELETE CASCADE,
+			user_id uuid NOT NULL REFERENCES ${user} (id) ON DELETE CASCADE,
 			title text,
 			claude_session_id text,
 			created_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -38,7 +38,7 @@ export class CreateAonThreadsAndWorkspaces1789200000000 implements IrreversibleM
 
 		await runQuery(`CREATE TABLE ${t('aon_workspaces')} (
 			id text PRIMARY KEY,
-			user_id varchar(36) NOT NULL REFERENCES ${user} (id) ON DELETE CASCADE,
+			user_id uuid NOT NULL REFERENCES ${user} (id) ON DELETE CASCADE,
 			slug text NOT NULL,
 			created_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			last_used_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
