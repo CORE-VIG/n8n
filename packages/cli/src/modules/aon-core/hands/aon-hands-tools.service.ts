@@ -4,6 +4,10 @@ import z from 'zod';
 
 import type { RegisterToolFn, ToolDefinition } from '@/modules/mcp/mcp.types';
 
+import { AonGuardService } from '../guard/aon-guard.service';
+import { AON_OP_CLASSES } from '../guard/op-classes';
+import { identityFromRequest } from '../guard/request-identity';
+
 import { AonHandsService, HANDS_WORKSPACE_DIR } from './aon-hands.service';
 
 const MAX_TEXT = 100 * 1024;
@@ -77,6 +81,11 @@ function clip(value: string, max = MAX_TEXT): string {
 	return `...(cut, only the last ${max} bytes shown)\n${kept}`;
 }
 
+/** The start of a string, for a card or an event: the opposite of {@link clip}, which keeps the tail. */
+function preview(value: string, max: number): string {
+	return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
 /**
  * The Aon assistant's hands, offered as MCP tools of this instance so any
  * client the owner allows can use them the same way. Thin wrappers: the
@@ -84,7 +93,10 @@ function clip(value: string, max = MAX_TEXT): string {
  */
 @Service()
 export class McpAonHandsToolsService {
-	constructor(private readonly hands: AonHandsService) {}
+	constructor(
+		private readonly hands: AonHandsService,
+		private readonly guard: AonGuardService,
+	) {}
 
 	async registerTools(registerIfAllowed: RegisterToolFn, user: User) {
 		if (!(await this.hands.isConfigured())) return;
@@ -99,8 +111,38 @@ export class McpAonHandsToolsService {
 				inputSchema: runSchema,
 				annotations: { title: 'Run a command', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const decision = await this.guard.decideTool(identity, 'hands_run', args);
+
+					if (decision.verdict === 'deny') {
+						await this.guard.record(identity, decision.opClass, 'deny', {
+							command: preview(args.command, 120),
+						});
+						const label =
+							AON_OP_CLASSES.find((c) => c.opClass === decision.opClass)?.label ?? decision.opClass;
+						return {
+							content: [{ type: 'text' as const, text: `Guard denies this: ${label}` }],
+							isError: true,
+						};
+					}
+
+					if (decision.verdict === 'ask') {
+						const summary = args.network
+							? `Run: ${preview(args.command, 120)} with the network`
+							: `Run: ${preview(args.command, 120)}`;
+						const approval = await this.guard.requestApproval(identity, decision.opClass, summary, {
+							command: args.command,
+							network: args.network ?? false,
+						});
+						return text(`Guard needs the owner's yes: card ${approval.id} raised. Stop now and wait.`);
+					}
+
+					await this.guard.record(identity, decision.opClass, 'allow', {
+						command: preview(args.command, 120),
+					});
+
 					const ws = await this.hands.workspace(user, args.workspace);
 					if (!ws.sandbox.executeCommand) throw new Error('this sandbox cannot run commands');
 					const result = await ws.sandbox.executeCommand(args.command, [], {

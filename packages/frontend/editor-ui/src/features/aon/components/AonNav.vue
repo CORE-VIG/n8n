@@ -4,6 +4,7 @@ import { RouterLink, useRoute } from 'vue-router';
 
 import {
 	AON_AGENTS_VIEW,
+	AON_GUARD_VIEW,
 	AON_HANDS_VIEW,
 	AON_HOME_VIEW,
 	AON_MEMORY_VIEW,
@@ -20,6 +21,7 @@ const tabs = [
 	{ name: AON_RUNS_VIEW, label: 'aon.nav.runs', prefix: '/aon/runs' },
 	{ name: AON_MEMORY_VIEW, label: 'aon.nav.memory', prefix: '/aon/memory' },
 	{ name: AON_HANDS_VIEW, label: 'aon.nav.hands', prefix: '/aon/hands' },
+	{ name: AON_GUARD_VIEW, label: 'aon.nav.guard', prefix: '/aon/guard' },
 ] as const;
 
 const isActive = (prefix: string) =>

@@ -3,6 +3,7 @@ import type { FrontendModuleDescription } from '@n8n/frontend-module-sdk';
 import {
 	AON_AGENT_VIEW,
 	AON_AGENTS_VIEW,
+	AON_GUARD_VIEW,
 	AON_HANDS_VIEW,
 	AON_HOME_VIEW,
 	AON_MEMORY_VIEW,
@@ -21,6 +22,7 @@ const AonMemoryView = async () => await import('./views/AonMemoryView.vue');
 const AonSourceView = async () => await import('./views/AonSourceView.vue');
 const AonHandsView = async () => await import('./views/AonHandsView.vue');
 const AonWorkspaceView = async () => await import('./views/AonWorkspaceView.vue');
+const AonGuardView = async () => await import('./views/AonGuardView.vue');
 
 /**
  * Aon inside n8n.
@@ -49,5 +51,6 @@ export const AonModule: FrontendModuleDescription = {
 			component: AonWorkspaceView,
 			meta: { middleware: ['authenticated'] },
 		},
+		{ name: AON_GUARD_VIEW, path: '/aon/guard', component: AonGuardView, meta: { middleware: ['authenticated'] } },
 	],
 };

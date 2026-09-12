@@ -6,6 +6,7 @@ export function statusTheme(status: string): BadgeTheme {
 		case 'done':
 		case 'active':
 		case 'kept':
+		case 'pass':
 			return 'success';
 		case 'running':
 		case 'queued':
@@ -13,13 +14,22 @@ export function statusTheme(status: string): BadgeTheme {
 		case 'paused':
 		case 'canary':
 		case 'waiting':
+		case 'working':
+		case 'validating':
 			return 'warning';
+		case 'waiting_approval':
+			return 'primary';
+		case 'needs_help':
+			return 'danger';
 		case 'failed':
 		case 'stopped':
 		case 'error':
 		case 'revoked':
 		case 'tripped':
+		case 'fail':
 			return 'danger';
+		case 'unknown':
+			return 'tertiary';
 		default:
 			return 'default';
 	}

@@ -7,6 +7,7 @@ export const AON_MEMORY_VIEW = 'AonMemory';
 export const AON_SOURCE_VIEW = 'AonSource';
 export const AON_HANDS_VIEW = 'AonHands';
 export const AON_WORKSPACE_VIEW = 'AonWorkspace';
+export const AON_GUARD_VIEW = 'AonGuard';
 
 /** What a tool is doing, in his words rather than its name. */
 export const AON_DOING: Record<string, { now: string; done: string }> = {
@@ -30,6 +31,7 @@ export const AON_DOING: Record<string, { now: string; done: string }> = {
 	mcp__n8n__hands_read_file: { now: 'Reading a file', done: 'Read a file' },
 	mcp__n8n__hands_list_files: { now: 'Listing files', done: 'Listed files' },
 	mcp__n8n__hands_delete: { now: 'Deleting a file', done: 'Deleted a file' },
+	mcp__n8n__guard_request: { now: 'Asking Guard', done: 'Asked Guard' },
 	mcp__n8n__search_agents: { now: 'Reading n8n agents', done: 'Read n8n agents' },
 	mcp__n8n__get_agent: { now: 'Reading the n8n agent', done: 'Read the n8n agent' },
 	mcp__n8n__list_agent_versions: { now: 'Reading n8n agent versions', done: 'Read n8n agent versions' },

@@ -80,6 +80,8 @@ export interface AonAgentDetail extends AonAgentSummary {
 	deliverables: AonDeliverableSummary[];
 	runs: AonRunSummary[];
 	rules: AonLearnedRuleSummary[];
+	/** Month-to-date spend across this agent's runs, at list price, in euros. */
+	spentEurMonth?: number;
 }
 
 export interface AonAgentsOverview {

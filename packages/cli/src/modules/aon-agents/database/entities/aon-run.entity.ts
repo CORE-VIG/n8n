@@ -28,7 +28,7 @@ export class AonRun extends BaseEntity {
 	trigger: string;
 
 	@Column({ type: 'jsonb', nullable: true })
-	input: unknown;
+	input: Record<string, unknown> | null;
 
 	@Column({ type: 'text', nullable: true })
 	output: string | null;
@@ -37,7 +37,7 @@ export class AonRun extends BaseEntity {
 	outputPageId: string | null;
 
 	@Column({ type: 'jsonb', nullable: true })
-	verification: unknown;
+	verification: Record<string, unknown> | null;
 
 	@Column({ type: 'text', nullable: true })
 	help: string | null;

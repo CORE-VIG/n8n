@@ -101,4 +101,20 @@ export class AonAgentRepository extends Repository<AonAgent> {
 		);
 		return Object.fromEntries(rows.map((r) => [r.status, r.count]));
 	}
+
+	async setStatus(id: string, status: string): Promise<void> {
+		await this.update({ id }, { status, updatedAt: new Date() });
+	}
+
+	async resetBreaker(id: string): Promise<void> {
+		await this.update({ id }, { breakerFailures: 0, breakerTrippedAt: null, updatedAt: new Date() });
+	}
+
+	/** Applied after a run finishes: `breakerAfter()` in run-machine.ts decides the numbers. */
+	async applyBreakerOutcome(id: string, input: { failures: number; trippedAt: Date | null }): Promise<void> {
+		await this.update(
+			{ id },
+			{ breakerFailures: input.failures, breakerTrippedAt: input.trippedAt, updatedAt: new Date() },
+		);
+	}
 }

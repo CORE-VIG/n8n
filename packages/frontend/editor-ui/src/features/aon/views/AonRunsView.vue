@@ -3,7 +3,7 @@ import type { AonAgentSummary, AonRunList } from '@n8n/api-types';
 import { N8nBadge, N8nOption, N8nSelect } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useRootStore } from '@n8n/stores/useRootStore';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 
 import { getAgents } from '../aon.api';
@@ -12,6 +12,9 @@ import { AON_AGENT_VIEW, AON_RUN_VIEW } from '../constants';
 import { getRuns } from '../runs.api';
 import { statusTheme } from '../status';
 import { useAonTime } from '../useAonTime';
+
+const IN_FLIGHT_STATUSES = new Set(['queued', 'working', 'validating', 'waiting_approval']);
+const POLL_MS = 5_000;
 
 const i18n = useI18n();
 const rootStore = useRootStore();
@@ -26,6 +29,10 @@ const statusFilter = ref('');
 const agentFilter = ref('');
 
 const statusEntries = computed(() => Object.entries(list.value?.byStatus ?? {}));
+
+const inFlightCount = computed(
+	() => list.value?.items.filter((run) => IN_FLIGHT_STATUSES.has(run.status)).length ?? 0,
+);
 
 const euro = (n: number) => `€${n.toFixed(2)}`;
 
@@ -51,6 +58,8 @@ function goToRun(id: string) {
 	void router.push({ name: AON_RUN_VIEW, params: { id } });
 }
 
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+
 onMounted(async () => {
 	try {
 		agents.value = await getAgents(rootStore.restApiContext);
@@ -58,6 +67,13 @@ onMounted(async () => {
 		// The agent filter is a convenience; the table still works without it.
 	}
 	await load();
+	pollTimer = setInterval(() => {
+		if (inFlightCount.value > 0) void load();
+	}, POLL_MS);
+});
+
+onUnmounted(() => {
+	if (pollTimer) clearInterval(pollTimer);
 });
 
 watch([statusFilter, agentFilter], load);
@@ -66,7 +82,12 @@ watch([statusFilter, agentFilter], load);
 <template>
 	<div :class="$style.page">
 		<AonNav />
-		<h1 :class="$style.title">{{ i18n.baseText('aon.runs.title') }}</h1>
+		<div :class="$style.head">
+			<h1 :class="$style.title">{{ i18n.baseText('aon.runs.title') }}</h1>
+			<N8nBadge v-if="inFlightCount > 0" theme="warning" size="small">
+				{{ i18n.baseText('aon.runs.inFlight', { interpolate: { count: String(inFlightCount) } }) }}
+			</N8nBadge>
+		</div>
 		<p :class="$style.lede">{{ i18n.baseText('aon.runs.lede') }}</p>
 
 		<div :class="$style.filters">
@@ -160,6 +181,13 @@ watch([statusFilter, agentFilter], load);
 	display: flex;
 	flex-direction: column;
 	gap: var(--spacing--xs);
+}
+
+.head {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing--xs);
+	flex-wrap: wrap;
 }
 
 .title {

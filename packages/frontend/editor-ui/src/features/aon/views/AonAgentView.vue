@@ -1,26 +1,106 @@
 <script setup lang="ts">
 import type { AonAgentDetail } from '@n8n/api-types';
-import { N8nBadge } from '@n8n/design-system';
+import { useToast } from '@n8n/composables/useToast';
+import { N8nBadge, N8nButton, N8nInput } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useRootStore } from '@n8n/stores/useRootStore';
-import { computed, onMounted, ref } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 
+import { resetBreaker as resetBreakerRequest, runDeliverable, setAgentStatus } from '../agents.api';
 import { getAgent } from '../aon.api';
 import AonNav from '../components/AonNav.vue';
-import { AON_AGENTS_VIEW } from '../constants';
+import { AON_AGENTS_VIEW, AON_RUN_VIEW } from '../constants';
 import { statusTheme } from '../status';
 import { useAonTime } from '../useAonTime';
 
 const i18n = useI18n();
 const rootStore = useRootStore();
 const route = useRoute();
+const router = useRouter();
 const { ago } = useAonTime();
+const { showMessage, showError } = useToast();
 
 const slug = computed(() => String(route.params.slug ?? ''));
 const agent = ref<AonAgentDetail | null>(null);
 const missing = ref(false);
 const error = ref<string | null>(null);
+
+const togglingStatus = ref(false);
+const resettingBreaker = ref(false);
+const runInputs = reactive<Record<string, string>>({});
+const runningDeliverable = ref<string | null>(null);
+
+const isActive = computed(() => agent.value?.status === 'active');
+const spentEurMonthText = computed(() => (agent.value?.spentEurMonth ?? 0).toFixed(2));
+const budgetEurMonthText = computed(() => (agent.value?.charter.guard.budgetEurMonth ?? 0).toFixed(2));
+
+/** `catch` hands us `unknown`; this narrows without a cast. */
+function errorMessage(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
+}
+
+function failedTitle(e: unknown): string {
+	return i18n.baseText('aon.home.failed', { interpolate: { message: errorMessage(e) } });
+}
+
+async function toggleStatus() {
+	if (!agent.value || togglingStatus.value) return;
+	togglingStatus.value = true;
+	const next = isActive.value ? 'paused' : 'active';
+	try {
+		const updated = await setAgentStatus(rootStore.restApiContext, agent.value.slug, next);
+		agent.value = { ...agent.value, ...updated };
+		showMessage({
+			type: 'success',
+			title: i18n.baseText('aon.agent.statusChanged', {
+				interpolate: { name: updated.name, status: updated.status },
+			}),
+		});
+	} catch (e) {
+		showError(e, failedTitle(e));
+	} finally {
+		togglingStatus.value = false;
+	}
+}
+
+async function doResetBreaker() {
+	if (!agent.value || resettingBreaker.value) return;
+	resettingBreaker.value = true;
+	try {
+		const updated = await resetBreakerRequest(rootStore.restApiContext, agent.value.slug);
+		agent.value = { ...agent.value, ...updated };
+		showMessage({ type: 'success', title: i18n.baseText('aon.agent.breakerReset') });
+	} catch (e) {
+		showError(e, failedTitle(e));
+	} finally {
+		resettingBreaker.value = false;
+	}
+}
+
+async function runNow(deliverableId: string) {
+	if (!agent.value || runningDeliverable.value) return;
+	runningDeliverable.value = deliverableId;
+	try {
+		const input = (runInputs[deliverableId] ?? '').trim();
+		const run = await runDeliverable(rootStore.restApiContext, agent.value.slug, deliverableId, {
+			input: input || undefined,
+		});
+		runInputs[deliverableId] = '';
+		showMessage({
+			type: 'success',
+			title: i18n.baseText('aon.agent.runQueued', { interpolate: { id: run.id } }),
+			onClick: () => void router.push({ name: AON_RUN_VIEW, params: { id: run.id } }),
+		});
+	} catch (e) {
+		showMessage({
+			type: 'error',
+			title: i18n.baseText('aon.agent.runFailedToQueue', { interpolate: { message: errorMessage(e) } }),
+		});
+	} finally {
+		runningDeliverable.value = null;
+	}
+}
 
 /** A charter value, readable: strings as they are, everything else as JSON. */
 const show = (value: unknown): string => {
@@ -102,8 +182,25 @@ onMounted(async () => {
 		<template v-else-if="agent">
 			<header :class="$style.head" data-test-id="aon-agent-head">
 				<h1 :class="$style.title">{{ agent.name }}</h1>
-				<N8nBadge :theme="statusTheme(agent.status)">{{ agent.status }}</N8nBadge>
+				<N8nBadge :theme="statusTheme(agent.status)" data-test-id="aon-agent-status">
+					{{ agent.status }}
+				</N8nBadge>
 				<code :class="$style.slug">{{ agent.slug }}</code>
+				<N8nButton
+					:label="i18n.baseText(isActive ? 'aon.agent.pause' : 'aon.agent.activate')"
+					:loading="togglingStatus"
+					variant="outline"
+					size="small"
+					@click="toggleStatus"
+				/>
+				<N8nButton
+					v-if="agent.breakerTrippedAt"
+					:label="i18n.baseText('aon.agent.resetBreaker')"
+					:loading="resettingBreaker"
+					variant="outline"
+					size="small"
+					@click="doResetBreaker"
+				/>
 			</header>
 			<p v-if="agent.breakerTrippedAt" :class="$style.error">
 				{{
@@ -112,6 +209,13 @@ onMounted(async () => {
 							when: ago(agent.breakerTrippedAt),
 							failures: String(agent.breakerFailures),
 						},
+					})
+				}}
+			</p>
+			<p v-if="agent.charter.guard.budgetEurMonth !== null" :class="$style.meta">
+				{{
+					i18n.baseText('aon.agent.budget', {
+						interpolate: { spent: spentEurMonthText, budget: budgetEurMonthText },
 					})
 				}}
 			</p>
@@ -205,6 +309,25 @@ onMounted(async () => {
 						<span v-if="d.lastRunAt" :class="$style.meta">
 							{{ i18n.baseText('aon.agent.deliverable.lastRun', { interpolate: { when: ago(d.lastRunAt) } }) }}
 						</span>
+						<div :class="$style.runNow">
+							<N8nInput
+								v-model="runInputs[d.id]"
+								type="textarea"
+								:rows="2"
+								:disabled="!isActive"
+								:placeholder="i18n.baseText('aon.agent.runInput')"
+							/>
+							<div :class="$style.runNowRow">
+								<N8nButton
+									:label="i18n.baseText('aon.agent.runNow')"
+									:disabled="!isActive"
+									:loading="runningDeliverable === d.id"
+									data-test-id="aon-agent-run-now"
+									@click="runNow(d.id)"
+								/>
+								<span v-if="!isActive" :class="$style.meta">{{ i18n.baseText('aon.agent.notActive') }}</span>
+							</div>
+						</div>
 					</li>
 				</ul>
 			</section>
@@ -397,6 +520,20 @@ onMounted(async () => {
 	font-size: var(--font-size--2xs);
 	color: var(--color--warning);
 	max-width: 40ch;
+}
+
+.runNow {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing--3xs);
+	margin-top: var(--spacing--3xs);
+	max-width: 480px;
+}
+
+.runNowRow {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing--xs);
 }
 
 .tableWrap {

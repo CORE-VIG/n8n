@@ -36,4 +36,8 @@ export class AonConfig {
 	/** The embedding model. Memory chunks were embedded with bge-m3 (1024 dims). */
 	@Env('AON_EMBED_MODEL')
 	embedModel: string = 'bge-m3';
+
+	/** Telegram chat ids the channel bridge accepts as the owner, comma-separated. Empty means the bridge is closed. */
+	@Env('AON_TELEGRAM_CHAT_IDS')
+	telegramChatIds: string = '';
 }

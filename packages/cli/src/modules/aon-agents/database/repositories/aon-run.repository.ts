@@ -1,6 +1,6 @@
 import type { AonRunDetail, AonRunSummary } from '@n8n/api-types';
 import { Service } from '@n8n/di';
-import { DataSource, Repository } from '@n8n/typeorm';
+import { DataSource, In, LessThan, Repository } from '@n8n/typeorm';
 
 import { AonAgent } from '../entities/aon-agent.entity';
 import { AonDeliverable } from '../entities/aon-deliverable.entity';
@@ -145,5 +145,153 @@ export class AonRunRepository extends Repository<AonRun> {
 			`SELECT max(created_at) AS last FROM ${this.table(AonRun)}`,
 		);
 		return iso(rows[0]?.last ?? null);
+	}
+
+	// --- executor -----------------------------------------------------
+
+	/** Oldest queued runs first, for the executor to check for claimability. */
+	async listQueuedOldestFirst(limit: number): Promise<AonRun[]> {
+		return await this.find({ where: { status: 'queued' }, order: { createdAt: 'ASC' }, take: limit });
+	}
+
+	/**
+	 * Claims one specific queued run for this process, atomically: a run
+	 * another claimer (or a concurrent tick) already took is skipped rather
+	 * than waited on. Returns null when it could not be claimed.
+	 */
+	async claimForExecution(id: string): Promise<AonRun | null> {
+		const rows = await this.manager.query<Array<{ id: string }>>(
+			`UPDATE ${this.table(AonRun)}
+			SET status = 'working', claimed_by = 'executor', started_at = now(), heartbeat_at = now(), updated_at = now()
+			WHERE id = (
+				SELECT id FROM ${this.table(AonRun)}
+				WHERE id = $1 AND status = 'queued'
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING id`,
+			[id],
+		);
+		const claimedId = rows[0]?.id;
+		return claimedId ? await this.findOneBy({ id: claimedId }) : null;
+	}
+
+	/** `working`/`validating` runs whose heartbeat has gone stale. */
+	async listStuck(deadMs: number): Promise<AonRun[]> {
+		const cutoff = new Date(Date.now() - deadMs);
+		return await this.find({ where: { status: In(['working', 'validating']), heartbeatAt: LessThan(cutoff) } });
+	}
+
+	async listByStatus(status: string): Promise<AonRun[]> {
+		return await this.find({ where: { status } });
+	}
+
+	/** This month's spend for one agent, at list price, in euros. */
+	async sumCostEurThisMonth(agentId: string): Promise<number> {
+		const rows = await this.manager.query<Array<{ sum: number | null }>>(
+			`SELECT COALESCE(sum(cost_eur), 0)::float8 AS sum
+			FROM ${this.table(AonRun)}
+			WHERE agent_id = $1 AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)`,
+			[agentId],
+		);
+		return rows[0]?.sum ?? 0;
+	}
+
+	async createQueued(input: {
+		id: string;
+		deliverableId: string;
+		agentId: string;
+		parentRunId: string | null;
+		iteration: number;
+		attempt: number;
+		trigger: string;
+		input: Record<string, unknown> | null;
+	}): Promise<AonRun> {
+		// Raw SQL: TypeORM's partial-entity typing has no room for a nullable jsonb value.
+		await this.manager.query(
+			`INSERT INTO ${this.table(AonRun)} (id, deliverable_id, agent_id, parent_run_id, status, attempt, iteration, trigger, input, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			[
+				input.id,
+				input.deliverableId,
+				input.agentId,
+				input.parentRunId,
+				input.attempt,
+				input.iteration,
+				input.trigger,
+				input.input === null ? null : JSON.stringify(input.input),
+			],
+		);
+		return await this.findOneByOrFail({ id: input.id });
+	}
+
+	async setWorking(id: string): Promise<void> {
+		await this.update({ id }, { status: 'working', heartbeatAt: new Date(), updatedAt: new Date() });
+	}
+
+	async setValidating(id: string): Promise<void> {
+		await this.update({ id }, { status: 'validating', updatedAt: new Date() });
+	}
+
+	async setDone(
+		id: string,
+		input: { output: string; verification: Record<string, unknown> | null },
+	): Promise<void> {
+		await this.manager.query(
+			`UPDATE ${this.table(AonRun)} SET status = 'done', output = $2, verification = $3::jsonb,
+				finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			[id, input.output, input.verification === null ? null : JSON.stringify(input.verification)],
+		);
+	}
+
+	async setWaitingApproval(
+		id: string,
+		input: { approvalId: string; output: string; verification?: Record<string, unknown> | null },
+	): Promise<void> {
+		await this.manager.query(
+			`UPDATE ${this.table(AonRun)} SET status = 'waiting_approval', approval_id = $2, output = $3,
+				verification = $4::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			[id, input.approvalId, input.output, input.verification ? JSON.stringify(input.verification) : null],
+		);
+	}
+
+	async setNeedsHelp(
+		id: string,
+		help: string,
+		verification: Record<string, unknown> | null = null,
+	): Promise<void> {
+		await this.manager.query(
+			`UPDATE ${this.table(AonRun)} SET status = 'needs_help', help = $2, verification = $3::jsonb,
+				updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			[id, help, verification === null ? null : JSON.stringify(verification)],
+		);
+	}
+
+	async setFailed(id: string, help: string): Promise<void> {
+		await this.update({ id }, { status: 'failed', help, finishedAt: new Date(), updatedAt: new Date() });
+	}
+
+	async setStopped(id: string, help: string | null): Promise<void> {
+		await this.update({ id }, { status: 'stopped', help, finishedAt: new Date(), updatedAt: new Date() });
+	}
+
+	async touchHeartbeat(id: string): Promise<void> {
+		await this.update({ id }, { heartbeatAt: new Date() });
+	}
+
+	/** Adds to the run's usage rather than replacing it: a resume keeps the first attempt's cost. */
+	async addUsage(
+		id: string,
+		input: { model: string | null; tokensIn: number; tokensOut: number; costEur: number },
+	): Promise<void> {
+		await this.manager.query(
+			`UPDATE ${this.table(AonRun)}
+			SET model = COALESCE($2, model),
+				tokens_in = tokens_in + $3,
+				tokens_out = tokens_out + $4,
+				cost_eur = cost_eur + $5,
+				updated_at = now()
+			WHERE id = $1`,
+			[id, input.model, input.tokensIn, input.tokensOut, input.costEur],
+		);
 	}
 }
