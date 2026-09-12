@@ -8791,5 +8791,13 @@
  "aon.voice.readAloud": "Read the last reply aloud",
  "aon.voice.speakFailed": "Couldn't speak that reply right now.",
  "aon.settings.parts.google.connected": "Google: connected as {email}",
- "aon.settings.parts.google.notConnected": "Google: not connected. Create the \"Aon Google\" credential in Credentials with scopes: {scopes}"
+ "aon.settings.parts.google.notConnected": "Google: not connected. Create the \"Aon Google\" credential in Credentials with scopes: {scopes}",
+ "aon.chat.input": "Input",
+ "aon.chat.result": "Result",
+ "aon.chat.copy": "Copy",
+ "aon.chat.copied": "Copied",
+ "aon.chat.elapsed": "{ms} ms",
+ "aon.chat.nodeOutputs": "Node outputs",
+ "aon.chat.nodeItems": "{count} items",
+ "aon.chat.openExecution": "Open execution"
 }

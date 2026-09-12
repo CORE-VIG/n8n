@@ -10,6 +10,8 @@ import { useUsersStore } from '@n8n/stores/users.store';
 import { VIEWS } from '@/app/constants';
 import { useAonAssistantStore } from './aonAssistant.store';
 import { useAonTime } from '../useAonTime';
+import { AON_TOOL_CUSTOM_TYPE, toAonTurnTool } from './aon-tool-message';
+import AonToolCard from './AonToolCard.vue';
 import AonVoiceControls from './AonVoiceControls.vue';
 import { getVoiceStatus, speakText } from '../voice.api';
 
@@ -226,6 +228,12 @@ const onDeleteThread = (id: string) => {
 			>
 				<template #extra-actions>
 					<AonVoiceControls @transcribed="onVoiceTranscribed" @error="onVoiceError" />
+				</template>
+				<template #custom-message="{ message }">
+					<AonToolCard
+						v-if="message.type === 'custom' && message.customType === AON_TOOL_CUSTOM_TYPE"
+						:tool="toAonTurnTool(message.data)"
+					/>
 				</template>
 			</N8nAskAssistantChat>
 		</div>

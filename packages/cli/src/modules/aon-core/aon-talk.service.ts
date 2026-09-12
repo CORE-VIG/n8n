@@ -27,7 +27,7 @@ type Session = { claudeSessionId: string | null; busy: boolean; userId: string }
  */
 const SYSTEM_PROMPT_BODY = `CHOOSE THE RIGHT PART FIRST. You, the assistant, do what he asks in this turn. An Aon agent is a script that works on its own from its orientation, rules, skills, tools and Guard, and owes deliverables; it may set up, manage and review workflows, but it is never one. A workflow is fixed n8n automation with no judgement of its own. An n8n agent (n8n's "Agents · Preview") is a different thing, the cheap tier; always call it "n8n agent". When the job needs judgement on its own schedule, that is an agent; when it is fixed steps, that is a workflow; never offer one as the other.
 
-FINISH WHAT HE ASKS FOR. If he asks for a workflow, build it: call get_workflow_sdk_reference first, write the workflow code, validate_workflow_code, then create_workflow_from_code. What you create is a DRAFT until he says publish; never say it is running when it is a draft. When he asks to test it, call prepare_workflow_pin_data, fill in realistic sample data, run test_workflow, and read back what each node produced. Call publish_workflow only when he says publish. Call execute_workflow with executionMode "production" only when he explicitly asks to run it for real; "manual" is for trying it. When he asks to change a workflow, read it with get_workflow_details, then update_workflow.
+FINISH WHAT HE ASKS FOR. If he asks for a workflow, build it: call get_workflow_sdk_reference first, write the workflow code, validate_workflow_code, then create_workflow_from_code. What you create is a DRAFT until he says publish; never say it is running when it is a draft. When he asks to test it, call prepare_workflow_pin_data, fill in realistic sample data, run test_workflow, and read back what each node produced. Call publish_workflow only when he says publish. Call execute_workflow with executionMode "production" only when he explicitly asks to run it for real; "manual" is for trying it. When he asks to change a workflow, read it with get_workflow_details, then update_workflow. The window shows your tool results as snippets, so quote only what matters and point at the card for the rest.
 
 When you have created or changed a workflow, say its name and that it is open beside this chat. Ask at most one question, and only when the request is genuinely ambiguous; otherwise pick a sensible default, do it, and say what you chose. Never invent what a tool returned; read it back from the tool. If something failed, say what and why in one sentence.
 
@@ -180,7 +180,21 @@ export class AonTalkService {
 			) {
 				const status = frame.status;
 				if (status === 'start' || status === 'ok' || status === 'error') {
-					tools.set(frame.id, { id: frame.id, name: frame.name, status });
+					const existing = tools.get(frame.id);
+					tools.set(frame.id, { ...existing, id: frame.id, name: frame.name, status });
+				}
+			} else if (frame.type === 'tool_result' && typeof frame.id === 'string') {
+				// Arrives right after the matching 'tool' start/ok/error frame, in the
+				// same dispatch tick, so the entry it merges onto always exists.
+				const existing = tools.get(frame.id);
+				if (existing) {
+					tools.set(frame.id, {
+						...existing,
+						input: typeof frame.input === 'string' ? frame.input : existing.input,
+						result: typeof frame.result === 'string' ? frame.result : existing.result,
+						isError: typeof frame.isError === 'boolean' ? frame.isError : existing.isError,
+						ms: typeof frame.ms === 'number' ? frame.ms : existing.ms,
+					});
 				}
 			} else if (frame.type === 'session') {
 				const id = typeof frame.id === 'string' ? frame.id : null;
@@ -269,7 +283,7 @@ export class AonTalkService {
 				return;
 			}
 
-			const toolNames = new Map<string, string>();
+			const toolCalls = { names: new Map<string, string>(), inputs: new Map<string, unknown>(), starts: new Map<string, number>() };
 			let stderr = '';
 			let sawText = false;
 			let finished = false;
@@ -304,7 +318,7 @@ export class AonTalkService {
 				} catch {
 					return;
 				}
-				this.dispatch(ev, session, toolNames, write, () => {
+				this.dispatch(ev, session, toolCalls, write, () => {
 					sawText = true;
 				});
 			});
@@ -329,7 +343,7 @@ export class AonTalkService {
 	private dispatch(
 		ev: Record<string, unknown>,
 		session: Session,
-		toolNames: Map<string, string>,
+		tools: { names: Map<string, string>; inputs: Map<string, unknown>; starts: Map<string, number> },
 		write: Write,
 		onText: () => void,
 	) {
@@ -353,7 +367,9 @@ export class AonTalkService {
 			for (const block of msg?.content ?? []) {
 				const b = block as Record<string, unknown>;
 				if (b.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string') {
-					toolNames.set(b.id, b.name);
+					tools.names.set(b.id, b.name);
+					tools.inputs.set(b.id, b.input);
+					tools.starts.set(b.id, Date.now());
 					write({ type: 'tool', id: b.id, name: b.name, status: 'start' });
 				}
 			}
@@ -364,14 +380,28 @@ export class AonTalkService {
 			for (const block of msg?.content ?? []) {
 				const b = block as Record<string, unknown>;
 				if (b.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
-				const name = toolNames.get(b.tool_use_id) ?? 'tool';
+				const id = b.tool_use_id;
+				const name = tools.names.get(id) ?? 'tool';
 				const text = resultText(b.content);
-				write({ type: 'tool', id: b.tool_use_id, name, status: b.is_error ? 'error' : 'ok' });
+				const isError = Boolean(b.is_error);
+				write({ type: 'tool', id, name, status: isError ? 'error' : 'ok' });
 				// The thing it made, so the window can open it.
-				if (/create_workflow_from_code|update_workflow$/.test(name) && !b.is_error) {
+				if (/create_workflow_from_code|update_workflow$/.test(name) && !isError) {
 					const m = /"(?:workflowId|id)"\s*:\s*"([A-Za-z0-9_-]{6,})"/.exec(text);
 					if (m) write({ type: 'workflow', id: m[1] });
 				}
+				// The result itself, so the window can show it as a snippet, not
+				// just his one-line summary of it.
+				const started = tools.starts.get(id);
+				write({
+					type: 'tool_result',
+					id,
+					name,
+					input: redactedInputJson(tools.inputs.get(id), 1500),
+					result: cutText(text, resultCapFor(name)),
+					isError,
+					ms: typeof started === 'number' ? Date.now() - started : 0,
+				});
 			}
 			return;
 		}
@@ -399,4 +429,50 @@ function resultText(content: unknown): string {
 			.join('\n');
 	}
 	return '';
+}
+
+/** A tool call's field name that must never reach the window in the clear. */
+const SECRET_FIELD_NAME = /password|token|secret|apiKey/i;
+
+/** The tools whose results the owner wants to see in full, not just a taste. */
+const BIG_RESULT_TOOLS = new Set([
+	'test_workflow',
+	'get_workflow_execution',
+	'validate_workflow',
+	'validate_workflow_code',
+	'hands_run',
+	'web_read',
+	'mail_read',
+	'memory_search',
+	'aon_run_report',
+	'aon_run_start',
+]);
+
+/** The window shows this against the tool's own name, so its `mcp__n8n__` prefix is dropped first. */
+function resultCapFor(name: string): number {
+	const bare = name.replace(/^mcp__n8n__/, '');
+	return BIG_RESULT_TOOLS.has(bare) ? 12_000 : 6_000;
+}
+
+/** Cut long text for the window, saying how much was left out rather than just stopping. */
+function cutText(text: string, maxLen: number): string {
+	if (text.length <= maxLen) return text;
+	return `${text.slice(0, maxLen)}… (cut, ${text.length - maxLen} more chars)`;
+}
+
+/**
+ * The tool call's input, compacted and with anything that looks like a
+ * credential blanked out, for the window's expanded card. JSON.stringify's
+ * replacer visits every key at every depth, so a nested secret is caught the
+ * same as a top-level one.
+ */
+function redactedInputJson(input: unknown, maxLen: number): string {
+	if (input === undefined) return '';
+	let json: string;
+	try {
+		json = JSON.stringify(input, (key, value) => (SECRET_FIELD_NAME.test(key) ? '[redacted]' : value)) ?? '';
+	} catch {
+		json = '';
+	}
+	return cutText(json, maxLen);
 }
