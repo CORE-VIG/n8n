@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, test, expect } from 'vitest';
 
 import {
 	checkUrl,
@@ -7,7 +7,7 @@ import {
 	parseLinksJsonl,
 	parseInteractiveElements,
 	MAX_URL_CHARS,
-} from './aon-browser.service';
+} from '../aon-browser.service';
 
 const OWN = ['auto.cod-a.com', '10.0.1.1'];
 
