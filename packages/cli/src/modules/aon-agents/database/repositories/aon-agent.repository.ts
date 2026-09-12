@@ -106,6 +106,45 @@ export class AonAgentRepository extends Repository<AonAgent> {
 		await this.update({ id }, { status, updatedAt: new Date() });
 	}
 
+	/**
+	 * A freshly authored agent: draft, no breaker history, no token yet. Raw
+	 * SQL: TypeORM's partial-entity typing has no room for a jsonb value.
+	 */
+	async createDraft(input: {
+		id: string;
+		slug: string;
+		name: string;
+		persona: string;
+		charter: Record<string, unknown>;
+		createdBy: string;
+	}): Promise<AonAgent> {
+		await this.manager.query(
+			`INSERT INTO ${this.table(AonAgent)}
+				(id, slug, name, persona, charter, status, token_id, breaker_failures, breaker_tripped_at, created_by, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5::jsonb, 'draft', NULL, 0, NULL, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			[input.id, input.slug, input.name, input.persona, JSON.stringify(input.charter), input.createdBy],
+		);
+		return await this.findOneByOrFail({ id: input.id });
+	}
+
+	/**
+	 * Merges name/persona/a charter patch into an existing agent. The charter
+	 * patch is merged into the jsonb column with `||` (shallow, key by key):
+	 * a key the patch omits keeps its old value; a key it sets replaces it.
+	 */
+	async mergeCharter(
+		id: string,
+		input: { name?: string; persona?: string; charterPatch?: Record<string, unknown> },
+	): Promise<void> {
+		await this.manager.query(
+			`UPDATE ${this.table(AonAgent)}
+			SET name = COALESCE($2, name), persona = COALESCE($3, persona),
+				charter = charter || $4::jsonb, updated_at = now()
+			WHERE id = $1`,
+			[id, input.name ?? null, input.persona ?? null, JSON.stringify(input.charterPatch ?? {})],
+		);
+	}
+
 	async resetBreaker(id: string): Promise<void> {
 		await this.update({ id }, { breakerFailures: 0, breakerTrippedAt: null, updatedAt: new Date() });
 	}

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { N8nAskAssistantButton, N8nAskAssistantChat } from '@n8n/design-system';
+import { N8nAskAssistantButton, N8nAskAssistantChat, N8nIcon } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
+import { useRootStore } from '@n8n/stores/useRootStore';
 import { useSettingsStore } from '@n8n/stores/settings.store';
 import { useUsersStore } from '@n8n/stores/users.store';
 
 import { VIEWS } from '@/app/constants';
 import { useAonAssistantStore } from './aonAssistant.store';
 import { useAonTime } from '../useAonTime';
+import AonVoiceControls from './AonVoiceControls.vue';
+import { getVoiceStatus, speakText } from '../voice.api';
 
 /**
  * The assistant as a messenger: a button in the corner of every page, and a
@@ -20,6 +23,7 @@ import { useAonTime } from '../useAonTime';
 const store = useAonAssistantStore();
 const settings = useSettingsStore();
 const users = useUsersStore();
+const rootStore = useRootStore();
 const router = useRouter();
 const i18n = useI18n();
 const { ago } = useAonTime();
@@ -32,6 +36,82 @@ const user = computed(() => {
 
 const onMessage = (text: string) => {
 	void store.send(text);
+};
+
+// Voice: hearing (the mic, in AonVoiceControls) and speaking (read the last
+// reply aloud, here). Both stay hidden until the sidecar answers /status;
+// it being down is a normal state, not an error.
+const voiceConfigured = ref(false);
+const speaking = ref(false);
+const voiceError = ref<string | null>(null);
+let speakAudio: HTMLAudioElement | null = null;
+let speakUrl: string | null = null;
+
+onMounted(async () => {
+	try {
+		const status = await getVoiceStatus(rootStore.restApiContext);
+		voiceConfigured.value = status.configured;
+	} catch {
+		voiceConfigured.value = false;
+	}
+});
+
+onBeforeUnmount(() => {
+	stopSpeaking();
+});
+
+const lastAssistantReply = computed(() => {
+	for (let i = store.messages.length - 1; i >= 0; i -= 1) {
+		const message = store.messages[i];
+		if (
+			message.role === 'assistant' &&
+			'content' in message &&
+			typeof message.content === 'string' &&
+			message.content.trim()
+		) {
+			return message.content;
+		}
+	}
+	return null;
+});
+
+const onVoiceTranscribed = (text: string) => {
+	void store.send(text);
+};
+
+const onVoiceError = (message: string) => {
+	voiceError.value = message;
+};
+
+function stopSpeaking() {
+	speakAudio?.pause();
+	speakAudio = null;
+	if (speakUrl) {
+		URL.revokeObjectURL(speakUrl);
+		speakUrl = null;
+	}
+	speaking.value = false;
+}
+
+const toggleReadAloud = async () => {
+	if (speaking.value) {
+		stopSpeaking();
+		return;
+	}
+	const text = lastAssistantReply.value;
+	if (!text) return;
+	voiceError.value = null;
+	try {
+		const { blob } = await speakText(rootStore.restApiContext, text);
+		speakUrl = URL.createObjectURL(blob);
+		speakAudio = new Audio(speakUrl);
+		speakAudio.onended = () => stopSpeaking();
+		speaking.value = true;
+		await speakAudio.play();
+	} catch (err) {
+		speaking.value = false;
+		voiceError.value = err instanceof Error ? err.message : i18n.baseText('aon.voice.speakFailed');
+	}
 };
 
 const openWorkflow = async () => {
@@ -68,10 +148,22 @@ const onDeleteThread = (id: string) => {
 			<div :class="$style.head">
 				<span :class="$style.name">Aon</span>
 				<button v-if="store.lastWorkflowId" :class="$style.link" type="button" @click="openWorkflow">Open the workflow</button>
+				<button
+					v-if="voiceConfigured && lastAssistantReply"
+					:class="$style.link"
+					type="button"
+					data-test-id="aon-assistant-read-aloud"
+					:title="i18n.baseText('aon.voice.readAloud')"
+					:aria-label="i18n.baseText('aon.voice.readAloud')"
+					@click="toggleReadAloud"
+				>
+					<N8nIcon :icon="speaking ? 'volume-x' : 'volume-2'" size="small" />
+				</button>
 				<button :class="$style.link" type="button" @click="toggleThreads">
 					{{ i18n.baseText('aon.assistant.conversations') }}
 				</button>
 			</div>
+			<p v-if="voiceError" :class="$style.voiceError" data-test-id="aon-voice-error">{{ voiceError }}</p>
 
 			<div v-if="store.listOpen" :class="$style.listPanel" data-test-id="aon-assistant-threads">
 				<div :class="$style.listToolbar">
@@ -131,7 +223,11 @@ const onDeleteThread = (id: string) => {
 				input-placeholder="Ask for a workflow, a change, a test…"
 				@close="store.close()"
 				@message="onMessage"
-			/>
+			>
+				<template #extra-actions>
+					<AonVoiceControls @transcribed="onVoiceTranscribed" @error="onVoiceError" />
+				</template>
+			</N8nAskAssistantChat>
 		</div>
 		<div v-else :class="$style.button" data-test-id="aon-assistant-button">
 			<N8nAskAssistantButton :unread-count="store.unread" @click="store.open()" />
@@ -274,5 +370,13 @@ const onDeleteThread = (id: string) => {
 	color: var(--color--text--tint-1);
 	font-size: var(--font-size--2xs);
 	margin: 0;
+}
+.voiceError {
+	margin: 0;
+	padding: var(--spacing--3xs) var(--spacing--xs);
+	font-size: var(--font-size--3xs);
+	color: var(--color--danger);
+	background: var(--color--danger--tint-2);
+	border-bottom: 1px solid var(--color--foreground);
 }
 </style>

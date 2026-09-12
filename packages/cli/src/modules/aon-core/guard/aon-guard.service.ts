@@ -7,7 +7,8 @@ import { AonGuardApprovalRepository } from '../database/repositories/aon-guard-a
 import { AonGuardEventRepository } from '../database/repositories/aon-guard-event.repository';
 import { AonGuardPolicyRepository } from '../database/repositories/aon-guard-policy.repository';
 
-import { AON_OP_CLASSES, opClassOfTool, tierOf } from './op-classes';
+import { AonGuardCardsService } from './aon-guard-cards.service';
+import { AON_OP_CLASSES, DEFAULT_AGENT_TIER_CEILING, opClassOfTool, tierOf } from './op-classes';
 
 /** A card stays open this long before it expires unclaimed. */
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +42,7 @@ export class AonGuardService {
 		private readonly policyRepository: AonGuardPolicyRepository,
 		private readonly approvalRepository: AonGuardApprovalRepository,
 		private readonly eventRepository: AonGuardEventRepository,
+		private readonly cards: AonGuardCardsService,
 	) {}
 
 	/** The verdict for one op class, for this identity: a policy row, else the tier default. */
@@ -98,6 +100,16 @@ export class AonGuardService {
 			tier,
 			verdict: 'asked',
 			approvalId: approval.id,
+		});
+		// Fire and forget: a failed notification must not stop the card from
+		// existing, and the owner can always find it on the Guard page.
+		void this.cards.notify({
+			id: approval.id,
+			identity: approval.identity,
+			opClass: approval.opClass,
+			tier: approval.tier,
+			summary: approval.summary,
+			runId: approval.runId,
 		});
 		return approval;
 	}
@@ -163,7 +175,7 @@ export class AonGuardService {
 	/** Without a policy row: an agent acts alone up to its ceiling, asks for tier 3, never tier 4; the owner is asked only for tier 4. */
 	defaultVerdict(identity: AonGuardIdentity, tier: number): AonGuardVerdict {
 		if (identity.kind === 'owner') return tier >= 4 ? 'deny' : 'allow';
-		const ceiling = identity.tierCeiling ?? 2;
+		const ceiling = identity.tierCeiling ?? DEFAULT_AGENT_TIER_CEILING;
 		if (tier >= 4) return 'deny';
 		if (tier <= ceiling) return 'allow';
 		return 'ask';

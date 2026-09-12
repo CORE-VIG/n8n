@@ -40,4 +40,16 @@ export class AonConfig {
 	/** Telegram chat ids the channel bridge accepts as the owner, comma-separated. Empty means the bridge is closed. */
 	@Env('AON_TELEGRAM_CHAT_IDS')
 	telegramChatIds: string = '';
+
+	/** The fenced browser (Obscura's MCP endpoint) on the host. Empty means the browser is offline, a normal state. */
+	@Env('AON_BROWSER_URL')
+	browserUrl: string = '';
+
+	/** The voice sidecar (STT/TTS) on the host. Empty means voice is offline, a normal state. */
+	@Env('AON_VOICE_URL')
+	voiceUrl: string = '';
+
+	/** Bearer token for the voice sidecar. */
+	@Env('AON_VOICE_TOKEN')
+	voiceToken: string = '';
 }

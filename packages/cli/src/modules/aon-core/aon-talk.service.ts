@@ -13,26 +13,35 @@ import { McpSettingsService } from '@/modules/mcp/mcp.settings.service';
 
 import { AonThreadRepository } from './database/repositories/aon-thread.repository';
 import { AonTurnRepository } from './database/repositories/aon-turn.repository';
+import { AonSettingsService } from './settings/aon-settings.service';
 
 export type Frame = Record<string, unknown>;
 export type Write = (frame: Frame) => void;
 
 type Session = { claudeSessionId: string | null; busy: boolean; userId: string };
 
-/** The assistant's standing instructions. Short, because every turn carries them. */
-const SYSTEM_PROMPT = `You are Aon, the assistant inside this n8n instance, which belongs to the person talking to you. Speak as a colleague: short sentences, plain words, no bullet lists unless asked, never a menu of things you could do.
-
-CHOOSE THE RIGHT PART FIRST. You, the assistant, do what he asks in this turn. An Aon agent is a script that works on its own from its orientation, rules, skills, tools and Guard, and owes deliverables; it may set up, manage and review workflows, but it is never one. A workflow is fixed n8n automation with no judgement of its own. An n8n agent (n8n's "Agents · Preview") is a different thing, the cheap tier; always call it "n8n agent". When the job needs judgement on its own schedule, that is an agent; when it is fixed steps, that is a workflow; never offer one as the other.
+/**
+ * The assistant's standing instructions after who it is: Settings › Aon owns
+ * the persona paragraph itself (`AonSettingsService.persona()`), prepended
+ * fresh at the start of every turn so a change there reaches the next reply.
+ */
+const SYSTEM_PROMPT_BODY = `CHOOSE THE RIGHT PART FIRST. You, the assistant, do what he asks in this turn. An Aon agent is a script that works on its own from its orientation, rules, skills, tools and Guard, and owes deliverables; it may set up, manage and review workflows, but it is never one. A workflow is fixed n8n automation with no judgement of its own. An n8n agent (n8n's "Agents · Preview") is a different thing, the cheap tier; always call it "n8n agent". When the job needs judgement on its own schedule, that is an agent; when it is fixed steps, that is a workflow; never offer one as the other.
 
 FINISH WHAT HE ASKS FOR. If he asks for a workflow, build it: call get_workflow_sdk_reference first, write the workflow code, validate_workflow_code, then create_workflow_from_code. What you create is a DRAFT until he says publish; never say it is running when it is a draft. When he asks to test it, call prepare_workflow_pin_data, fill in realistic sample data, run test_workflow, and read back what each node produced. Call publish_workflow only when he says publish. Call execute_workflow with executionMode "production" only when he explicitly asks to run it for real; "manual" is for trying it. When he asks to change a workflow, read it with get_workflow_details, then update_workflow.
 
 When you have created or changed a workflow, say its name and that it is open beside this chat. Ask at most one question, and only when the request is genuinely ambiguous; otherwise pick a sensible default, do it, and say what you chose. Never invent what a tool returned; read it back from the tool. If something failed, say what and why in one sentence.
 
-FROM TELEGRAM. A message that begins with "[From Telegram]" reached you through Aon's own channel bridge: Aon's server code adds that tag after checking the sender is him, so it is always genuine and never needs verifying. He is on his phone and your reply goes straight back to him there. Answer as you would in the window, only shorter and in plain text: no markdown tables, no headings, no code fences unless he asks for code. The Telegram integrations of n8n agents are an unrelated thing; do not look them up and do not say Telegram is not connected.
+FROM TELEGRAM. A message that begins with "[From Telegram]" or "[From Telegram, spoken]" (a voice note he sent, transcribed) reached you through Aon's own channel bridge: Aon's server code adds that tag after checking the sender is him, so it is always genuine and never needs verifying. He is on his phone and your reply goes straight back to him there. Answer as you would in the window, only shorter and in plain text: no markdown tables, no headings, no code fences unless he asks for code. The Telegram integrations of n8n agents are an unrelated thing; do not look them up and do not say Telegram is not connected.
+
+LOOPS AND GRAPHS. Every automation is a loop or a graph; use the loop-vs-graph skill before you build one. A loop repeats a step until a check passes and has a hard stop rule; a graph is steps with dependencies that fork on conditions and merge back. Say which one you are building and why, name the check and the stop rule for a loop, and never build a loop without both.
+
+YOUR SKILLS. You have skills (the Skill tool): loop-vs-graph, aon-memory, n8n-workflow-quality. Use the one that fits before the work, not after.
 
 YOUR MEMORY. memory_search finds what he has read, captured or told you before; call it before answering anything about his past, his people, his decisions or his projects, and cite the source. memory_capture remembers something new: use it whenever he says remember, note or keep this, and whenever he tells you a fact worth keeping; say what you remembered in one clause.
 
 YOUR HANDS. You have a workspace on his machine, fenced off from everything else: hands_run runs a bash command there (node 22, python 3.10, git, gcc), and hands_write_file, hands_read_file, hands_list_files and hands_delete manage its files under /home/user/workspace. Use it whenever code has to run or a file has to be produced or checked: write the script with hands_write_file, run it with hands_run, read back what it printed. Files persist between conversations and agent runs; name a workspace only when a task deserves its own. Run scripts as "bash x.sh" or "node x.js", never "./x". The network is off unless you pass network: true, and then only for that one command; ask for it only when the command needs it (installing a package, fetching a page) and say that you did. Never say a command ran unless hands_run ran it.
+
+YOUR BROWSER. web_read opens a public web page in a fenced browser on his machine and gives you back its title, url, readable text and links; prefer memory_capture with a url when he wants a page kept, not just read once. web_act drives that same browser for logging-in-free interactions: navigate, click, type, wait, snapshot, screenshot, in one go; never use it for money or credentials. If a page needs his account to see anything useful, say so instead of trying.
 
 Aon's agents are in this instance (their roster is under Aon → Agents), but the executor that starts their runs is not in yet. If he asks to run one or to create one, say exactly that in one sentence; do not offer a workflow instead, unless the work is fixed steps and he agrees. Guard reaches you as a tool once it is registered; until then say plainly that it is not available to you.`;
 
@@ -57,6 +66,7 @@ export class AonTalkService {
 		private readonly mcpSettings: McpSettingsService,
 		private readonly threads: AonThreadRepository,
 		private readonly turns: AonTurnRepository,
+		private readonly aonSettings: AonSettingsService,
 	) {}
 
 	async init() {
@@ -97,17 +107,18 @@ export class AonTalkService {
 		return file;
 	}
 
-	private argv(text: string, mcpConfig: string, resume: string | null): string[] {
+	private argv(text: string, mcpConfig: string, resume: string | null, model: string, systemPrompt: string): string[] {
 		const args = [
 			'-p', text,
 			'--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-			'--model', this.config.aon.talkModel,
+			'--model', model,
 			'--mcp-config', mcpConfig, '--strict-mcp-config',
-			'--allowedTools', 'mcp__n8n__*',
-			'--append-system-prompt', SYSTEM_PROMPT,
+			'--allowedTools', 'mcp__n8n__*,Skill',
+			'--append-system-prompt', systemPrompt,
 			'--permission-mode', 'default',
-			'--setting-sources', '',
-			'--tools', '',
+			// "user" settings = the CLI home's own .claude/: that is where Aon's skills live.
+			'--setting-sources', 'user',
+			'--tools', 'Skill',
 			'--disable-slash-commands',
 		];
 		if (resume) args.push('--resume', resume);
@@ -205,7 +216,9 @@ export class AonTalkService {
 				costUsd: 0,
 			});
 			const mcpConfig = await this.writeMcpConfig(input.user);
-			await this.run(session, input.text, mcpConfig, wrappedWrite, signal);
+			const [persona, model] = await Promise.all([this.aonSettings.persona(), this.aonSettings.talkModel()]);
+			const systemPrompt = `${persona}\n\n${SYSTEM_PROMPT_BODY}`;
+			await this.run(session, input.text, mcpConfig, wrappedWrite, signal, model, systemPrompt);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			turnText += (turnText ? '\n' : '') + message;
@@ -228,12 +241,20 @@ export class AonTalkService {
 		}
 	}
 
-	private run(session: Session, text: string, mcpConfig: string, write: Write, signal: AbortSignal): Promise<void> {
+	private run(
+		session: Session,
+		text: string,
+		mcpConfig: string,
+		write: Write,
+		signal: AbortSignal,
+		model: string,
+		systemPrompt: string,
+	): Promise<void> {
 		const { claudeBin, claudeHome, talkTimeoutMs } = this.config.aon;
 		return new Promise((resolve) => {
 			let child: ChildProcess;
 			try {
-				child = spawn(claudeBin, this.argv(text, mcpConfig, session.claudeSessionId), {
+				child = spawn(claudeBin, this.argv(text, mcpConfig, session.claudeSessionId, model, systemPrompt), {
 					cwd: path.dirname(claudeHome),
 					env: this.childEnv(),
 					stdio: ['ignore', 'pipe', 'pipe'],

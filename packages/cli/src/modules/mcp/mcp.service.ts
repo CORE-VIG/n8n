@@ -644,6 +644,16 @@ export class McpService {
 			// Aon: Guard's own tool, so an agent can raise a card for an effect it cannot decide by itself.
 			const { McpAonGuardToolsService } = await import('../aon-core/guard/aon-guard-tools.service.js');
 			Container.get(McpAonGuardToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: the fenced browser on the host (Obscura), offline unless AON_BROWSER_URL is set.
+			const { McpAonBrowserToolsService } = await import('../aon-core/browser/aon-browser-tools.service.js');
+			await Container.get(McpAonBrowserToolsService).registerTools(registerIfAllowed, user);
+
+			// Aon: agent authoring tools (build, read and change agents and their deliverables), owner only.
+			if (this.moduleRegistry.isActive('aon-agents')) {
+				const { McpAonAgentsToolsService } = await import('../aon-agents/aon-agents-tools.service.js');
+				Container.get(McpAonAgentsToolsService).registerTools(registerIfAllowed, user);
+			}
 		}
 
 		return server;

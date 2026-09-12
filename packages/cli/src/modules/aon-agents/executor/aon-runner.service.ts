@@ -70,7 +70,8 @@ export class AonRunnerService {
 			args.push('--mcp-config', opts.mcpConfigPath, '--strict-mcp-config');
 		}
 		if (opts.allowedTools.length > 0) {
-			args.push('--allowedTools', opts.allowedTools.map((name) => `mcp__n8n__${name}`).join(','));
+			const mcpNames = opts.allowedTools.map((name) => `mcp__n8n__${name}`);
+			args.push('--allowedTools', [...mcpNames, 'Skill'].join(','));
 		}
 		args.push(
 			'--append-system-prompt',
@@ -78,9 +79,9 @@ export class AonRunnerService {
 			'--permission-mode',
 			'default',
 			'--setting-sources',
-			'',
+			'user',
 			'--tools',
-			'',
+			'Skill',
 			'--disable-slash-commands',
 		);
 		if (opts.maxTurns) args.push('--max-turns', String(opts.maxTurns));

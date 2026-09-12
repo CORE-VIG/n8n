@@ -2,6 +2,7 @@ import type {
 	AonAgentDetail,
 	AonAgentSummary,
 	AonAgentsOverview,
+	AonDeliverableSummary,
 	AonRunDetail,
 	AonRunEvent,
 	AonRunList,
@@ -9,15 +10,14 @@ import type {
 } from '@n8n/api-types';
 import type { AuthenticatedRequest } from '@n8n/db';
 import type { NextFunction, Response } from 'express';
-import { Get, Middleware, Param, Patch, Post, RestController } from '@n8n/decorators';
-import { randomUUID } from 'node:crypto';
+import { Delete, Get, Middleware, Param, Patch, Post, RestController } from '@n8n/decorators';
 import { z } from 'zod';
 
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
 import { aonOwnerOnly } from '@/modules/aon-core/aon-owner';
 
-import { charterView } from './charter-view';
+import { AonAgentAuthoringService } from './aon-agent-authoring.service';
 import { AonAgentRepository } from './database/repositories/aon-agent.repository';
 import { AonDeliverableRepository } from './database/repositories/aon-deliverable.repository';
 import { AonLearnedRuleRepository } from './database/repositories/aon-learned-rule.repository';
@@ -33,7 +33,6 @@ type RunsRequest = AuthenticatedRequest<
 >;
 type EventsRequest = AuthenticatedRequest<{}, {}, {}, { after?: string }>;
 
-const RUNS_PER_AGENT = 20;
 const RUNS_DEFAULT = 50;
 const RUNS_MAX = 200;
 
@@ -45,6 +44,52 @@ const runNowBody = z.object({
 	input: z.string().max(20_000).optional(),
 });
 
+const charterInputSchema = z
+	.object({
+		purpose: z.string().max(4000).optional(),
+		owns: z.array(z.string().max(200)).max(50).optional(),
+		sources: z.array(z.string().max(200)).max(50).optional(),
+		do: z.array(z.string().max(500)).max(50).optional(),
+		dont: z.array(z.string().max(500)).max(50).optional(),
+		skills: z.array(z.string().max(100)).max(50).optional(),
+		tools: z.array(z.string().max(100)).max(50).optional(),
+		tierCeiling: z.number().int().min(0).max(4).optional(),
+		breakerLimit: z.number().int().min(1).max(50).optional(),
+		escalateWhen: z.string().max(2000).optional(),
+		budgetEurMonth: z.number().min(0).optional(),
+		modelBand: z.enum(['fast', 'standard', 'deep']).optional(),
+	})
+	.strict();
+
+const createAgentBody = z.object({
+	slug: z
+		.string()
+		.regex(/^[a-z0-9-]{2,40}$/, 'slug must be lowercase letters, digits and hyphens, 2 to 40 characters.'),
+	name: z.string().min(1).max(200),
+	persona: z.string().max(2000).optional(),
+	charter: charterInputSchema,
+});
+
+const updateCharterBody = z.object({
+	name: z.string().min(1).max(200).optional(),
+	persona: z.string().max(2000).optional(),
+	charter: charterInputSchema.optional(),
+});
+
+const deliverableFields = {
+	name: z.string().min(1).max(200),
+	dod: z.string().min(1).max(4000),
+	shape: z.enum(['single', 'recurring', 'goal']),
+	cadence: z.string().max(200).optional(),
+	tier: z.number().int().min(0).max(4),
+	approver: z.enum(['owner', 'auto']),
+	maxIterations: z.number().int().min(1).max(20).optional(),
+	enabled: z.boolean().optional(),
+};
+
+const createDeliverableBody = z.object(deliverableFields).strict();
+const patchDeliverableBody = z.object(deliverableFields).partial().strict();
+
 @RestController('/aon/agents')
 export class AonAgentsController {
 	constructor(
@@ -52,6 +97,7 @@ export class AonAgentsController {
 		private readonly deliverables: AonDeliverableRepository,
 		private readonly runs: AonRunRepository,
 		private readonly rules: AonLearnedRuleRepository,
+		private readonly authoring: AonAgentAuthoringService,
 	) {}
 
 	@Middleware()
@@ -92,23 +138,70 @@ export class AonAgentsController {
 		_res: unknown,
 		@Param('slug') slug: string,
 	): Promise<AonAgentDetail> {
-		const summary = await this.agents.findRosterBySlug(slug);
-		if (!summary) throw new NotFoundError(`There is no agent called ${slug}`);
-		const agent = await this.agents.findOneByOrFail({ id: summary.id });
-		const [deliverables, runs, rules, spentEurMonth] = await Promise.all([
-			this.deliverables.listForAgent(agent.id),
-			this.runs.listRecent({ agentId: agent.id, limit: RUNS_PER_AGENT }),
-			this.rules.listForAgent(agent.id),
-			this.runs.sumCostEurThisMonth(agent.id),
-		]);
-		return {
-			...summary,
-			charter: charterView(agent.charter, agent.persona),
-			deliverables,
-			runs,
-			rules,
-			spentEurMonth,
-		};
+		return await this.authoring.getDetail(slug);
+	}
+
+	@Post('/')
+	async create(req: AuthenticatedRequest): Promise<AonAgentDetail> {
+		const parsed = createAgentBody.safeParse(req.body);
+		if (!parsed.success) {
+			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
+		}
+		return await this.authoring.createAgent(
+			{ slug: parsed.data.slug, name: parsed.data.name, persona: parsed.data.persona, charter: parsed.data.charter },
+			req.user.email,
+		);
+	}
+
+	@Patch('/:slug/charter')
+	async updateCharter(
+		req: AuthenticatedRequest,
+		_res: unknown,
+		@Param('slug') slug: string,
+	): Promise<AonAgentDetail> {
+		const parsed = updateCharterBody.safeParse(req.body);
+		if (!parsed.success) {
+			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
+		}
+		return await this.authoring.updateCharter(slug, parsed.data);
+	}
+
+	@Post('/:slug/deliverables')
+	async createDeliverable(
+		req: AuthenticatedRequest,
+		_res: unknown,
+		@Param('slug') slug: string,
+	): Promise<AonDeliverableSummary> {
+		const parsed = createDeliverableBody.safeParse(req.body);
+		if (!parsed.success) {
+			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
+		}
+		return await this.authoring.createDeliverable(slug, parsed.data);
+	}
+
+	@Patch('/:slug/deliverables/:id')
+	async patchDeliverable(
+		req: AuthenticatedRequest,
+		_res: unknown,
+		@Param('slug') slug: string,
+		@Param('id') id: string,
+	): Promise<AonDeliverableSummary> {
+		const parsed = patchDeliverableBody.safeParse(req.body);
+		if (!parsed.success) {
+			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
+		}
+		return await this.authoring.updateDeliverable(slug, id, parsed.data);
+	}
+
+	@Delete('/:slug/deliverables/:id')
+	async deleteDeliverable(
+		_req: AuthenticatedRequest,
+		_res: unknown,
+		@Param('slug') slug: string,
+		@Param('id') id: string,
+	): Promise<{ deleted: true }> {
+		await this.authoring.deleteDeliverable(slug, id);
+		return { deleted: true };
 	}
 
 	@Patch('/:slug')
@@ -154,43 +247,7 @@ export class AonAgentsController {
 		if (!parsed.success) {
 			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
 		}
-		const summary = await this.agents.findRosterBySlug(slug);
-		if (!summary) throw new NotFoundError(`There is no agent called ${slug}`);
-		const deliverable = await this.deliverables.findOneBy({ id: deliverableId, agentId: summary.id });
-		if (!deliverable) {
-			throw new NotFoundError(`There is no deliverable ${deliverableId} for ${slug}.`);
-		}
-		const input = parsed.data.input && parsed.data.input.trim() ? { text: parsed.data.input } : null;
-		const run = await this.runs.createQueued({
-			id: randomUUID(),
-			deliverableId: deliverable.id,
-			agentId: summary.id,
-			parentRunId: null,
-			iteration: 1,
-			attempt: 1,
-			trigger: 'owner',
-			input,
-		});
-		return {
-			id: run.id,
-			agentId: summary.id,
-			agentSlug: summary.slug,
-			agentName: summary.name,
-			deliverableId: deliverable.id,
-			deliverableName: deliverable.name,
-			status: run.status,
-			attempt: run.attempt,
-			iteration: run.iteration,
-			invokedBy: run.trigger,
-			model: run.model,
-			tokensIn: run.tokensIn,
-			tokensOut: run.tokensOut,
-			costEur: run.costEur,
-			help: run.help,
-			startedAt: run.startedAt ? run.startedAt.toISOString() : null,
-			finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,
-			createdAt: run.createdAt.toISOString(),
-		};
+		return await this.authoring.startRun(slug, deliverableId, parsed.data.input, 'owner');
 	}
 }
 

@@ -77,13 +77,27 @@ done is met: the owner, or a model call the executor makes on the
 deliverable's behalf. A judge decides; it never acts. Planned with the
 executor.
 
+**Graph.** The shape of an automation whose steps have dependencies: each
+step runs once, branches fork on a condition and merge back, and the whole
+converges. In n8n, a workflow with IF/Switch branches and Merge nodes; in
+Aon, a `single` or `recurring` deliverable, or a parent run with child runs.
+A graph needs every branch to end somewhere and no edge pointing backwards.
+
+**Loop.** The shape of an automation that repeats a step until a check passes
+or a stop rule fires. In n8n, Loop Over Items or an edge that routes back; in
+Aon, a `goal` deliverable, where the judge is the check and `maxIterations`
+is the stop rule. A loop always needs both the check and the stop rule; one
+without the other is not a loop, it is a runaway. Every builder — the
+assistant, an agent — names the shape before building (skill `loop-vs-graph`).
+
+**Skill.** A procedure written down (SKILL.md) that any actor may follow;
+Aon's live in the CLI home's `.claude/skills/` (canonical copies in the
+fork's `aon-skills/`). A skill is knowledge, not an actor.
+
 **Run.** One recorded attempt by an Aon agent toward a deliverable: queued,
 claimed, running, judged, then done, failed or stopped, with its output and
 its cost. A *workflow execution* is n8n's record of a workflow; an *n8n agent
 run* is n8n's record of its agent. The three are never mixed up.
-
-**Skill.** A procedure written down (SKILL.md) that any actor may follow. A
-skill is knowledge, not an actor; it cannot act, own or decide.
 
 **Tool.** A callable capability assigned to an actor. It can come from a
 node, a workflow, Hands, custom code or an MCP server. A tool is a verb, not an
@@ -112,7 +126,28 @@ agent. Search is here now; capture and extraction are next.
 
 **Hands.** The fenced workspace where commands run and files live, for the
 assistant and for agents (and, through the same service, for n8n agents).
-Workflows do not use Hands; they use nodes.
+A command has no network unless Guard leases it, and a lease is the
+allowlist proxy (package registries, GitHub, model hubs; every connection
+logged), never the host's network. Workflows do not use Hands; they use nodes.
+
+**Browser.** A fenced browser on the host (Obscura, reached over its own MCP
+endpoint), for the assistant and for agents. `web_read` is tier 1: it opens a
+public page and returns its title, text and links. `web_act` is tier 3: it
+drives the same browser — navigate, click, type, wait, snapshot, screenshot —
+in one lease. One lease at a time; a fresh one clears cookies and closes
+tabs before it starts and closes tabs again on the way out, however it
+ended. A private address, a local name, or this instance's own host is
+refused before the browser is ever asked; Obscura refuses a private address
+again on its own side, which is also where DNS rebinding is caught.
+
+**Voice.** A host sidecar (`aon-voice`) that hears and speaks for the window
+and for the channel bridge — nothing more. It turns a recorded clip into
+text and turns text into spoken audio; it never reasons and never decides
+what to say. The window has a mic and a "read aloud" toggle; a Telegram
+voice note is transcribed before the turn runs, and a reply can come back
+as audio too. The sidecar being down is a normal state, not an error: every
+route answers with a plain "can't hear/speak right now" and the assistant
+still works by typing.
 
 **Owner.** The person. Guard's final approver, and the only one who
 authorizes publication; an approved actor may carry it out.
@@ -137,9 +172,11 @@ authorizes publication; an approved actor may carry it out.
 
 | Part | Backend | Pages | State |
 |---|---|---|---|
-| Assistant, Hands, config | `packages/cli/src/modules/aon-core` | the window (built); Settings › Aon (planned) | built |
+| Assistant, Hands, config | `packages/cli/src/modules/aon-core` | the window (built); Settings › Aon (built: persona, model, budget, skills, parts) | built |
 | Agents, deliverables, runs, rules | `packages/cli/src/modules/aon-agents` | `/aon/agents`, `/aon/agents/:slug` | read-only now; executor, judge, routines, channel bridge planned |
 | Guard | `packages/cli/src/modules/aon-guard` | Guard page, cards | planned |
 | Memory | `packages/cli/src/modules/aon-memory` | search on `/aon` (built); a Memory page (planned) | search built; capture, extraction planned |
 | Hands service | `/root/aon-hands` on the host (n8n sandbox protocol) | — | built |
+| Browser | `packages/cli/src/modules/aon-core/browser`; `aon-browser` (Obscura) on the host | Browser status on `/aon` (planned) | built |
+| Voice | `packages/cli/src/modules/aon-core/voice`; `aon-voice` on the host | mic + read-aloud in the window | built |
 | Workflows, executions, n8n agents, credentials | n8n itself | n8n's own pages | stock |

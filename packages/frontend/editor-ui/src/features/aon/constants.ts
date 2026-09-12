@@ -1,5 +1,6 @@
 export const AON_HOME_VIEW = 'AonHome';
 export const AON_AGENTS_VIEW = 'AonAgents';
+export const AON_AGENT_NEW_VIEW = 'AonAgentNew';
 export const AON_AGENT_VIEW = 'AonAgent';
 export const AON_RUNS_VIEW = 'AonRuns';
 export const AON_RUN_VIEW = 'AonRun';
@@ -8,6 +9,7 @@ export const AON_SOURCE_VIEW = 'AonSource';
 export const AON_HANDS_VIEW = 'AonHands';
 export const AON_WORKSPACE_VIEW = 'AonWorkspace';
 export const AON_GUARD_VIEW = 'AonGuard';
+export const AON_SETTINGS_VIEW = 'AonSettings';
 
 /** What a tool is doing, in his words rather than its name. */
 export const AON_DOING: Record<string, { now: string; done: string }> = {
@@ -32,6 +34,8 @@ export const AON_DOING: Record<string, { now: string; done: string }> = {
 	mcp__n8n__hands_list_files: { now: 'Listing files', done: 'Listed files' },
 	mcp__n8n__hands_delete: { now: 'Deleting a file', done: 'Deleted a file' },
 	mcp__n8n__guard_request: { now: 'Asking Guard', done: 'Asked Guard' },
+	mcp__n8n__web_read: { now: 'Reading a web page', done: 'Read a web page' },
+	mcp__n8n__web_act: { now: 'Acting in the browser', done: 'Acted in the browser' },
 	mcp__n8n__memory_search: { now: 'Searching memory', done: 'Searched memory' },
 	mcp__n8n__memory_capture: { now: 'Remembering', done: 'Remembered' },
 	mcp__n8n__search_agents: { now: 'Reading n8n agents', done: 'Read n8n agents' },

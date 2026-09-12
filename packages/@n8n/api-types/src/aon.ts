@@ -33,6 +33,24 @@ export interface AonDeliverableSummary {
 	maxIterations: number;
 	enabled: boolean;
 	lastRunAt: string | null;
+	/** Next due time from `cadence`, computed after `lastRunAt ?? createdAt`. Null without a cadence. */
+	nextRunAt: string | null;
+}
+
+/** What an owner (or an agent-authoring MCP tool) may set on a charter; unset fields are left alone. */
+export interface AonCharterInput {
+	purpose?: string;
+	owns?: string[];
+	sources?: string[];
+	do?: string[];
+	dont?: string[];
+	skills?: string[];
+	tools?: string[];
+	tierCeiling?: number;
+	breakerLimit?: number;
+	escalateWhen?: string;
+	budgetEurMonth?: number;
+	modelBand?: 'fast' | 'standard' | 'deep';
 }
 
 export interface AonLearnedRuleSummary {

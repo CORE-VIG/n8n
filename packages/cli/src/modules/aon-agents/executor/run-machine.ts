@@ -1,5 +1,6 @@
 import type { AonRunStatus } from '@n8n/api-types';
 import { AON_RUN_STATUSES } from '@n8n/api-types';
+import { CronTime } from 'cron';
 
 /**
  * run-machine.ts: every decision the executor makes, with no I/O.
@@ -219,6 +220,19 @@ export function outcome(input: {
 		action: 'deliver',
 		reason: `delivery needs ${approver === 'auto' ? `an approval at tier ${tier}` : 'his yes'}`,
 	};
+}
+
+// Routines: a recurring deliverable's cadence is a cron expression. The next
+// due time is always computed fresh from `lastRunAt ?? createdAt`, so a
+// deliverable that was never scheduled while paused simply becomes due once,
+// not once per missed tick.
+export function nextRunAtFor(cadence: string | null, after: Date): Date | null {
+	if (!cadence || !cadence.trim()) return null;
+	try {
+		return new CronTime(cadence.trim()).getNextDateFrom(after).toJSDate();
+	} catch {
+		return null;
+	}
 }
 
 // runs-reconcile: a worker that stopped reporting is presumed dead.

@@ -187,6 +187,18 @@ export class AonRunRepository extends Repository<AonRun> {
 		return await this.find({ where: { status } });
 	}
 
+	/** True when a deliverable already has a run in flight: a routine must not double-queue it. */
+	async hasInFlightForDeliverable(deliverableId: string): Promise<boolean> {
+		const rows = await this.manager.query<Array<{ exists: boolean }>>(
+			`SELECT EXISTS (
+				SELECT 1 FROM ${this.table(AonRun)}
+				WHERE deliverable_id = $1 AND status IN ('queued', 'working', 'validating', 'waiting_approval')
+			) AS exists`,
+			[deliverableId],
+		);
+		return rows[0]?.exists ?? false;
+	}
+
 	/** This month's spend for one agent, at list price, in euros. */
 	async sumCostEurThisMonth(agentId: string): Promise<number> {
 		const rows = await this.manager.query<Array<{ sum: number | null }>>(

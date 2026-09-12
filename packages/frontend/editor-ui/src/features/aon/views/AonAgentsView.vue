@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import type { AonAgentSummary } from '@n8n/api-types';
-import { N8nBadge } from '@n8n/design-system';
+import { N8nBadge, N8nButton } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { onMounted, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 
 import { getAgents } from '../aon.api';
 import AonNav from '../components/AonNav.vue';
-import { AON_AGENT_VIEW } from '../constants';
+import { AON_AGENT_NEW_VIEW, AON_AGENT_VIEW } from '../constants';
 import { statusTheme } from '../status';
 import { useAonTime } from '../useAonTime';
 
 const i18n = useI18n();
 const rootStore = useRootStore();
+const router = useRouter();
 const { ago } = useAonTime();
 
 const agents = ref<AonAgentSummary[] | null>(null);
@@ -31,7 +32,14 @@ onMounted(async () => {
 <template>
 	<div :class="$style.page">
 		<AonNav />
-		<h1 :class="$style.title">{{ i18n.baseText('aon.agents.title') }}</h1>
+		<div :class="$style.head">
+			<h1 :class="$style.title">{{ i18n.baseText('aon.agents.title') }}</h1>
+			<N8nButton
+				:label="i18n.baseText('aon.agents.new')"
+				data-test-id="aon-agent-new"
+				@click="router.push({ name: AON_AGENT_NEW_VIEW })"
+			/>
+		</div>
 		<p :class="$style.lede">{{ i18n.baseText('aon.agents.lede') }}</p>
 
 		<p v-if="error" :class="$style.error">
@@ -98,6 +106,13 @@ onMounted(async () => {
 	font-size: var(--font-size--2xs);
 	color: var(--color--text--tint-1);
 	align-self: flex-start;
+}
+
+.head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--spacing--sm);
 }
 
 .title {

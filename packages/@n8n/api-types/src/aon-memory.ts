@@ -58,3 +58,101 @@ export interface AonCaptureResult {
 	/** Chunks still waiting for their embedding; the module finishes them in the background. */
 	pending: number;
 }
+
+/** Types returned by the Aon memory graph API: entities, facts, observations. */
+
+export interface AonEntitySummary {
+	id: string;
+	name: string;
+	kind: string;
+	aliases: string[];
+	summary: string | null;
+	factCount: number;
+	createdAt: string;
+}
+
+export interface AonFactSummary {
+	id: string;
+	subjectId: string;
+	subject: string;
+	predicate: string;
+	objectId: string | null;
+	object: string;
+	status: string;
+	confidence: number | null;
+	proposedBy: string | null;
+	sourceChunkId: string | null;
+	sourceId: string | null;
+	sourceTitle: string | null;
+	quote: string | null;
+	recordedAt: string;
+	decidedBy: string | null;
+	decidedAt: string | null;
+	note: string | null;
+}
+
+export interface AonEntityDetail extends AonEntitySummary {
+	facts: AonFactSummary[];
+	mentionedIn: Array<{ sourceId: string; title: string; origin: string }>;
+}
+
+export interface AonFactList {
+	items: AonFactSummary[];
+	total: number;
+	byStatus: Record<string, number>;
+}
+
+export interface AonObservationSummary {
+	id: string;
+	bucket: string;
+	text: string;
+	salience: number;
+	status: string;
+	firstSeen: string;
+	lastSeen: string;
+}
+
+export interface AonGraphNode {
+	id: string;
+	label: string;
+	kind: string;
+	weight: number;
+	cluster: number;
+}
+
+export interface AonGraphEdge {
+	from: string;
+	to: string;
+	label: string;
+	status: string;
+	factId: string;
+}
+
+export interface AonGraphCluster {
+	kind: string;
+	index: number;
+	count: number;
+}
+
+export interface AonMemoryGraph {
+	nodes: AonGraphNode[];
+	edges: AonGraphEdge[];
+	clusters: AonGraphCluster[];
+	focus: string | null;
+	truncated: boolean;
+}
+
+export interface AonMemorySkyCategory {
+	name: string;
+	count: number;
+	group: 'origin' | 'kind' | 'entity' | 'fact';
+}
+
+export interface AonMemorySky {
+	core: number;
+	categories: AonMemorySkyCategory[];
+	sources: number;
+	entities: number;
+	facts: number;
+	observations: number;
+}

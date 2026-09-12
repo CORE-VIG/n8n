@@ -1,5 +1,8 @@
 import type { AonGuardOpClass } from '@n8n/api-types';
 
+/** The tier ceiling an agent acts within by itself when its charter sets none. */
+export const DEFAULT_AGENT_TIER_CEILING = 2;
+
 /**
  * Every effect an actor can cause through this instance's tools, classed and
  * tiered. Tier 0 reads; 1 writes a draft or a file; 2 runs something inside
@@ -8,6 +11,7 @@ import type { AonGuardOpClass } from '@n8n/api-types';
  */
 export const AON_OP_CLASSES: readonly AonGuardOpClass[] = [
 	{ opClass: 'read', tier: 0, label: 'Read workflows, executions, nodes, credentials names, memory and files' },
+	{ opClass: 'web.read', tier: 1, label: 'Read a public web page in the browser' },
 	{ opClass: 'workflow.write', tier: 1, label: 'Create or change a workflow draft' },
 	{ opClass: 'hands.write', tier: 1, label: 'Write or delete files in a workspace' },
 	{ opClass: 'datatable.write', tier: 1, label: 'Create or change data tables and rows' },
@@ -20,6 +24,7 @@ export const AON_OP_CLASSES: readonly AonGuardOpClass[] = [
 	{ opClass: 'workflow.publish', tier: 3, label: 'Publish, unpublish or archive a workflow' },
 	{ opClass: 'n8n-agent.publish', tier: 3, label: 'Publish, unpublish or delete an n8n agent, or change its integrations' },
 	{ opClass: 'hands.network', tier: 3, label: 'Give a command the network' },
+	{ opClass: 'web.act', tier: 3, label: 'Act on a web page: click, type, submit' },
 	{ opClass: 'run.deliver', tier: 3, label: 'Accept a run\'s output as delivered' },
 	{ opClass: 'money', tier: 4, label: 'Spend money' },
 	{ opClass: 'access', tier: 4, label: 'Grant access or change credentials' },
@@ -64,6 +69,7 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	restore_workflow_version: 'workflow.write',
 	hands_write_file: 'hands.write',
 	hands_delete: 'hands.write',
+	web_read: 'web.read',
 	create_data_table: 'datatable.write',
 	rename_data_table: 'datatable.write',
 	add_data_table_column: 'datatable.write',
@@ -91,6 +97,7 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	delete_agent: 'n8n-agent.publish',
 	update_agent_integration: 'n8n-agent.publish',
 	verify_agent_mcp_server: 'n8n-agent.publish',
+	web_act: 'web.act',
 };
 
 const UNKNOWN_TOOL_TIER = 3;

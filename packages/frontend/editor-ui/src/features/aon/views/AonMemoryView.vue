@@ -5,7 +5,7 @@ import { useI18n } from '@n8n/i18n';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { useDebounceFn } from '@vueuse/core';
 import { computed, onMounted, ref, watch } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 
 import { getDebounceTime } from '@n8n/composables/useDebounce';
 import { DEBOUNCE_TIME } from '@/app/constants';
@@ -13,12 +13,19 @@ import { DEBOUNCE_TIME } from '@/app/constants';
 import { searchMemory } from '../aon.api';
 import AonNav from '../components/AonNav.vue';
 import { AON_SOURCE_VIEW } from '../constants';
+import AonEntitiesList from '../graph/AonEntitiesList.vue';
+import AonFactsTriage from '../graph/AonFactsTriage.vue';
+import AonMemoryGraphs from '../graph/AonMemoryGraphs.vue';
+import AonObservations from '../graph/AonObservations.vue';
 import { captureMemory, listSources } from '../memory.api';
 import { statusTheme } from '../status';
 import { useAonTime } from '../useAonTime';
 
+const memoryGraphs = ref<InstanceType<typeof AonMemoryGraphs> | null>(null);
+
 const i18n = useI18n();
 const rootStore = useRootStore();
+const route = useRoute();
 const { ago } = useAonTime();
 
 const PAGE_SIZE = 50;
@@ -151,6 +158,12 @@ async function loadSources({ append }: { append: boolean }) {
 
 onMounted(() => {
 	void loadSources({ append: false });
+	// The Home cockpit's search box lands here with `?q=`; run it once, up front.
+	const q = route.query.q;
+	if (typeof q === 'string' && q.trim()) {
+		query.value = q;
+		void search();
+	}
 });
 </script>
 
@@ -276,6 +289,27 @@ onMounted(() => {
 					</li>
 				</ol>
 			</div>
+		</section>
+
+		<section :class="$style.section" data-test-id="aon-memory-graph">
+			<h2 :class="$style.h2">{{ i18n.baseText('aon.graph.title') }}</h2>
+			<p :class="$style.lede">{{ i18n.baseText('aon.graph.lede') }}</p>
+			<AonMemoryGraphs ref="memoryGraphs" />
+		</section>
+
+		<section :class="$style.section">
+			<h2 :class="$style.h2">{{ i18n.baseText('aon.entities.title') }}</h2>
+			<AonEntitiesList @select="memoryGraphs?.focusEntity($event)" />
+		</section>
+
+		<section :class="$style.section">
+			<h2 :class="$style.h2">{{ i18n.baseText('aon.facts.title') }}</h2>
+			<AonFactsTriage />
+		</section>
+
+		<section :class="$style.section">
+			<h2 :class="$style.h2">{{ i18n.baseText('aon.observations.title') }}</h2>
+			<AonObservations />
 		</section>
 
 		<section :class="$style.section" data-test-id="aon-memory-sources">

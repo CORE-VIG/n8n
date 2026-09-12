@@ -1,6 +1,7 @@
 import type { FrontendModuleDescription } from '@n8n/frontend-module-sdk';
 
 import {
+	AON_AGENT_NEW_VIEW,
 	AON_AGENT_VIEW,
 	AON_AGENTS_VIEW,
 	AON_GUARD_VIEW,
@@ -9,12 +10,14 @@ import {
 	AON_MEMORY_VIEW,
 	AON_RUN_VIEW,
 	AON_RUNS_VIEW,
+	AON_SETTINGS_VIEW,
 	AON_SOURCE_VIEW,
 	AON_WORKSPACE_VIEW,
 } from './constants';
 
 const AonHomeView = async () => await import('./views/AonHomeView.vue');
 const AonAgentsView = async () => await import('./views/AonAgentsView.vue');
+const AonAgentNewView = async () => await import('./views/AonAgentNewView.vue');
 const AonAgentView = async () => await import('./views/AonAgentView.vue');
 const AonRunsView = async () => await import('./views/AonRunsView.vue');
 const AonRunView = async () => await import('./views/AonRunView.vue');
@@ -23,6 +26,7 @@ const AonSourceView = async () => await import('./views/AonSourceView.vue');
 const AonHandsView = async () => await import('./views/AonHandsView.vue');
 const AonWorkspaceView = async () => await import('./views/AonWorkspaceView.vue');
 const AonGuardView = async () => await import('./views/AonGuardView.vue');
+const AonSettingsView = async () => await import('./views/AonSettingsView.vue');
 
 /**
  * Aon inside n8n.
@@ -39,6 +43,12 @@ export const AonModule: FrontendModuleDescription = {
 	routes: [
 		{ name: AON_HOME_VIEW, path: '/aon', component: AonHomeView, meta: { middleware: ['authenticated'] } },
 		{ name: AON_AGENTS_VIEW, path: '/aon/agents', component: AonAgentsView, meta: { middleware: ['authenticated'] } },
+		{
+			name: AON_AGENT_NEW_VIEW,
+			path: '/aon/agents/new',
+			component: AonAgentNewView,
+			meta: { middleware: ['authenticated'] },
+		},
 		{ name: AON_AGENT_VIEW, path: '/aon/agents/:slug', component: AonAgentView, meta: { middleware: ['authenticated'] } },
 		{ name: AON_RUNS_VIEW, path: '/aon/runs', component: AonRunsView, meta: { middleware: ['authenticated'] } },
 		{ name: AON_RUN_VIEW, path: '/aon/runs/:id', component: AonRunView, meta: { middleware: ['authenticated'] } },
@@ -52,5 +62,11 @@ export const AonModule: FrontendModuleDescription = {
 			meta: { middleware: ['authenticated'] },
 		},
 		{ name: AON_GUARD_VIEW, path: '/aon/guard', component: AonGuardView, meta: { middleware: ['authenticated'] } },
+		{
+			name: AON_SETTINGS_VIEW,
+			path: '/aon/settings',
+			component: AonSettingsView,
+			meta: { middleware: ['authenticated'] },
+		},
 	],
 };

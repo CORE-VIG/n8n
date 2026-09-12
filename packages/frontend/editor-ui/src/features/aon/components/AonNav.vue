@@ -9,6 +9,7 @@ import {
 	AON_HOME_VIEW,
 	AON_MEMORY_VIEW,
 	AON_RUNS_VIEW,
+	AON_SETTINGS_VIEW,
 } from '../constants';
 
 /** The tabs every Aon page carries, so the parts are always one click apart. */
@@ -22,6 +23,7 @@ const tabs = [
 	{ name: AON_MEMORY_VIEW, label: 'aon.nav.memory', prefix: '/aon/memory' },
 	{ name: AON_HANDS_VIEW, label: 'aon.nav.hands', prefix: '/aon/hands' },
 	{ name: AON_GUARD_VIEW, label: 'aon.nav.guard', prefix: '/aon/guard' },
+	{ name: AON_SETTINGS_VIEW, label: 'aon.nav.settings', prefix: '/aon/settings' },
 ] as const;
 
 const isActive = (prefix: string) =>

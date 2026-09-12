@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { AonGuardService } from '@/modules/aon-core/guard/aon-guard.service';
 import { KNOWN_TOOL_NAMES, opClassOfTool } from '@/modules/aon-core/guard/op-classes';
+import { AonSettingsService } from '@/modules/aon-core/settings/aon-settings.service';
 import { McpServerApiKeyService } from '@/modules/mcp/mcp-api-key.service';
 import { OwnershipService } from '@/services/ownership.service';
 
@@ -33,6 +34,7 @@ import {
 	isRunStatus,
 	judgeModelFor,
 	makerModel,
+	nextRunAtFor,
 	outcome,
 	TERMINAL,
 } from './run-machine';
@@ -66,6 +68,7 @@ function runInputText(value: unknown): string {
 export class AonExecutorService {
 	private ticking = false;
 	private current: InFlight | null = null;
+	private started = false;
 
 	constructor(
 		private readonly runs: AonRunRepository,
@@ -78,12 +81,19 @@ export class AonExecutorService {
 		private readonly config: GlobalConfig,
 		private readonly mcpApiKeys: McpServerApiKeyService,
 		private readonly ownership: OwnershipService,
+		private readonly settings: AonSettingsService,
 		private readonly logger: Logger,
 	) {}
 
 	start(): void {
+		this.started = true;
 		setInterval(() => void this.tick(), TICK_MS).unref();
 		void this.tick();
+	}
+
+	/** Whether this process's tick loop has started: the Settings page's "executor running" line. */
+	isRunning(): boolean {
+		return this.started;
 	}
 
 	/** Stops a run: aborts the child if this process runs it, then marks it stopped. */
@@ -101,6 +111,7 @@ export class AonExecutorService {
 		try {
 			await this.reconcileStuck();
 			await this.reconcileWaitingApproval();
+			await this.queueDueRoutines();
 			if (!this.current) await this.claimAndExecute();
 		} catch (e) {
 			this.logger.error(`[aon] executor tick failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -150,6 +161,39 @@ export class AonExecutorService {
 		await this.resumeApproved(run, approval);
 	}
 
+	/**
+	 * A deliverable's cadence declares its own routine: no workflow, no
+	 * separate trigger. Due, enabled, recurring deliverables of a claimable
+	 * agent with nothing already in flight get one queued run each tick;
+	 * `claimAndExecute` (or a later tick) is what actually runs it.
+	 */
+	private async queueDueRoutines(): Promise<void> {
+		const now = new Date();
+		const candidates = await this.deliverables.listEnabledRecurring();
+		for (const deliverable of candidates) {
+			if (!deliverable.cadence) continue;
+			const due = nextRunAtFor(deliverable.cadence, deliverable.lastRunAt ?? deliverable.createdAt);
+			if (!due || due.getTime() > now.getTime()) continue;
+			const agent = await this.agents.findOneBy({ id: deliverable.agentId });
+			const check = claimable({
+				agent: agent ? { status: agent.status, breakerTrippedAt: agent.breakerTrippedAt } : null,
+				deliverable: { enabled: deliverable.enabled },
+			});
+			if (!check.ok || !agent) continue;
+			if (await this.runs.hasInFlightForDeliverable(deliverable.id)) continue;
+			await this.runs.createQueued({
+				id: randomUUID(),
+				deliverableId: deliverable.id,
+				agentId: agent.id,
+				parentRunId: null,
+				iteration: 1,
+				attempt: 1,
+				trigger: 'routine',
+				input: null,
+			});
+		}
+	}
+
 	// --- claim + run --------------------------------------------------------
 
 	private async claimAndExecute(): Promise<void> {
@@ -164,9 +208,13 @@ export class AonExecutorService {
 			if (!check.ok || !agent || !deliverable) continue;
 
 			const charter = charterView(agent.charter, agent.persona);
-			if (charter.guard.budgetEurMonth !== null) {
+			// A charter's own budget wins; an agent with none falls back to Settings ›
+			// Aon's instance-wide default, read fresh each tick so a change there takes
+			// effect on the next claim without a restart.
+			const budgetEurMonth = charter.guard.budgetEurMonth ?? (await this.settings.budgetEurMonth());
+			if (budgetEurMonth !== null) {
 				const spentEur = await this.runs.sumCostEurThisMonth(agent.id);
-				const decision = budgetDecision({ spentEur, budgetEurMonth: charter.guard.budgetEurMonth });
+				const decision = budgetDecision({ spentEur, budgetEurMonth });
 				if (!decision.ok) {
 					const claimed = await this.runs.claimForExecution(candidate.id);
 					if (!claimed) continue;
@@ -459,7 +507,9 @@ export class AonExecutorService {
 		if (inForce.length) rules.push(`Learned:\n- ${inForce.join('\n- ')}`);
 		if (rules.length) sections.push(['RULES', ...rules].join('\n'));
 
-		if (charter.skills.length) sections.push(`SKILLS\n${charter.skills.join(', ')}`);
+		if (charter.skills.length) {
+			sections.push(`SKILLS you may follow: ${charter.skills.join(', ')} (use the Skill tool).`);
+		}
 		if (charter.tools.length) sections.push(`TOOLS\n${charter.tools.join(', ')}`);
 
 		return sections.join('\n\n');
