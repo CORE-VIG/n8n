@@ -91,7 +91,7 @@ export class AonBridgeController {
 		const controller = new AbortController();
 		res.on('close', () => controller.abort());
 		await this.talk.turn(
-			{ user: owner, sessionId: threadId, text, reset: false },
+			{ user: owner, sessionId: threadId, text: `[From Telegram] ${text}`, reset: false },
 			(frame) => {
 				if (frame.type === 'text' && typeof frame.delta === 'string') reply += frame.delta;
 				else if (frame.type === 'cost' && typeof frame.usd === 'number') costUsd = frame.usd;
