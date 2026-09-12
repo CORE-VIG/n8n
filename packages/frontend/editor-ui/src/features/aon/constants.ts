@@ -32,6 +32,8 @@ export const AON_DOING: Record<string, { now: string; done: string }> = {
 	mcp__n8n__hands_list_files: { now: 'Listing files', done: 'Listed files' },
 	mcp__n8n__hands_delete: { now: 'Deleting a file', done: 'Deleted a file' },
 	mcp__n8n__guard_request: { now: 'Asking Guard', done: 'Asked Guard' },
+	mcp__n8n__memory_search: { now: 'Searching memory', done: 'Searched memory' },
+	mcp__n8n__memory_capture: { now: 'Remembering', done: 'Remembered' },
 	mcp__n8n__search_agents: { now: 'Reading n8n agents', done: 'Read n8n agents' },
 	mcp__n8n__get_agent: { now: 'Reading the n8n agent', done: 'Read the n8n agent' },
 	mcp__n8n__list_agent_versions: { now: 'Reading n8n agent versions', done: 'Read n8n agent versions' },

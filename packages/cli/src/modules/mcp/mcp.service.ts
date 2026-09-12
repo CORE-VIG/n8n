@@ -636,6 +636,10 @@ export class McpService {
 		if (this.moduleRegistry.isActive('aon-core')) {
 			const { McpAonHandsToolsService } = await import('../aon-core/hands/aon-hands-tools.service.js');
 			await Container.get(McpAonHandsToolsService).registerTools(registerIfAllowed, user);
+			if (this.moduleRegistry.isActive('aon-memory')) {
+				const { McpAonMemoryToolsService } = await import('../aon-memory/aon-memory-tools.service.js');
+				Container.get(McpAonMemoryToolsService).registerTools(registerIfAllowed);
+			}
 
 			// Aon: Guard's own tool, so an agent can raise a card for an effect it cannot decide by itself.
 			const { McpAonGuardToolsService } = await import('../aon-core/guard/aon-guard-tools.service.js');
