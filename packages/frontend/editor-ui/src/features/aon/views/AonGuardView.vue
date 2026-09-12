@@ -41,7 +41,7 @@ const SAVED_FLASH_MS = 1500;
 
 const i18n = useI18n();
 const rootStore = useRootStore();
-const { ago } = useAonTime();
+const { ago, untilLabel } = useAonTime();
 
 const overview = ref<AonGuardOverview | null>(null);
 const council = ref<AonCouncilClassView[]>([]);
@@ -263,7 +263,7 @@ async function onNoteChange(row: PolicyRowState, event: Event) {
 								{{ i18n.baseText('aon.guard.card.run', { interpolate: { id: card.runId ?? '' } }) }}
 							</RouterLink>
 							<span>
-								{{ i18n.baseText('aon.guard.card.expires', { interpolate: { when: ago(card.expiresAt) } }) }}
+								{{ i18n.baseText('aon.guard.card.expires', { interpolate: { when: untilLabel(card.expiresAt) } }) }}
 							</span>
 						</p>
 						<div :class="$style.cardActions">

@@ -41,7 +41,7 @@ const REFRESH_MARGIN_MS = 60_000;
 
 export class GoogleNotConfigured extends Error {
 	constructor(
-		message = `Google is not connected: create the "${AON_GOOGLE_CREDENTIAL_NAME}" credential in Credentials (scopes: ${GOOGLE_REQUIRED_SCOPES.join(' ')}) and finish the sign-in.`,
+		message = `Google is not connected: open the "${AON_GOOGLE_CREDENTIAL_NAME}" credential in Credentials (type Google OAuth2 API, scopes: ${GOOGLE_REQUIRED_SCOPES.join(' ')}) and finish the sign-in with Google.`,
 	) {
 		super(message);
 		this.name = 'GoogleNotConfigured';
@@ -102,8 +102,12 @@ export class AonGoogleAuthService {
 		private readonly projectRepository: ProjectRepository,
 	) {}
 
+	/** Configured means signed in: a credential row alone (no token yet) is "not connected" for every tool. */
 	async isConfigured(user: User): Promise<boolean> {
-		return (await this.findCredential(user)) !== null;
+		const credential = await this.findCredential(user);
+		if (!credential) return false;
+		const data = await this.decrypt(credential);
+		return Boolean(data.oauthTokenData?.access_token || data.oauthTokenData?.refresh_token);
 	}
 
 	/** A valid access token, refreshing and persisting it first if it is close to expiring. */
@@ -133,7 +137,8 @@ export class AonGoogleAuthService {
 			}
 		}
 
-		return { configured: true, credentialName: credential.name, scopes, email };
+		const signedIn = Boolean(data.oauthTokenData?.access_token || data.oauthTokenData?.refresh_token);
+		return { configured: signedIn, credentialName: credential.name, scopes, email };
 	}
 
 	// --- the credential ---------------------------------------------------

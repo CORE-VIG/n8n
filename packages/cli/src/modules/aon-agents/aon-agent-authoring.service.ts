@@ -244,6 +244,10 @@ export class AonAgentAuthoringService {
 		trigger: string,
 	): Promise<AonRunSummary> {
 		const agent = await this.resolveAgent(agentSlug);
+		// The executor claims runs of active agents only; a run queued for a draft or paused agent would wait forever.
+		if (agent.status !== 'active') {
+			throw new BadRequestError(`${agentSlug} is ${agent.status}; activate it before starting a run.`);
+		}
 		const deliverable = await this.resolveDeliverable(agentSlug, deliverableIdOrName);
 		const run = await this.runs.createQueued({
 			id: randomUUID(),
