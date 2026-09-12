@@ -28,8 +28,47 @@ const show = (value: unknown): string => {
 	return JSON.stringify(value, null, 2);
 };
 
-const charter = computed(() =>
-	Object.entries(agent.value?.charter ?? {}).map(([key, value]) => ({ key, value: show(value) })),
+const join = (values: string[]) => values.join(', ');
+
+/** Purpose / Owns / Sources, skipping whichever of them is empty. */
+const orientationRows = computed(() => {
+	const o = agent.value?.charter.orientation;
+	if (!o) return [];
+	const rows: Array<{ label: string; value: string }> = [];
+	if (o.purpose) rows.push({ label: i18n.baseText('aon.agent.purpose'), value: o.purpose });
+	if (o.owns.length > 0) rows.push({ label: i18n.baseText('aon.agent.owns'), value: join(o.owns) });
+	if (o.sources.length > 0) {
+		rows.push({ label: i18n.baseText('aon.agent.sources'), value: join(o.sources) });
+	}
+	return rows;
+});
+
+/** The Guard settings that are actually set, skipping the rest. */
+const guardRows = computed(() => {
+	const g = agent.value?.charter.guard;
+	if (!g) return [];
+	const rows: Array<{ label: string; value: string }> = [];
+	if (g.tierCeiling !== null) {
+		rows.push({ label: i18n.baseText('aon.agent.guard.tierCeiling'), value: String(g.tierCeiling) });
+	}
+	if (g.breakerLimit !== null) {
+		rows.push({ label: i18n.baseText('aon.agent.guard.breakerLimit'), value: String(g.breakerLimit) });
+	}
+	if (g.escalateWhen !== null) {
+		rows.push({ label: i18n.baseText('aon.agent.guard.escalateWhen'), value: g.escalateWhen });
+	}
+	if (g.budgetEurMonth !== null) {
+		rows.push({ label: i18n.baseText('aon.agent.guard.budgetEurMonth'), value: String(g.budgetEurMonth) });
+	}
+	if (g.modelBand !== null) {
+		rows.push({ label: i18n.baseText('aon.agent.guard.modelBand'), value: g.modelBand });
+	}
+	return rows;
+});
+
+/** Whatever the imported charter carried that Aon's own shape does not name. */
+const otherRows = computed(() =>
+	Object.entries(agent.value?.charter.other ?? {}).map(([key, value]) => ({ key, value: show(value) })),
 );
 
 const euro = (n: number) => `€${n.toFixed(2)}`;
@@ -76,16 +115,68 @@ onMounted(async () => {
 			</p>
 
 			<section :class="$style.section">
-				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.persona') }}</h2>
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.orientation') }}</h2>
 				<p :class="$style.prose">{{ agent.persona }}</p>
+				<dl v-if="orientationRows.length > 0" :class="$style.charter">
+					<template v-for="row in orientationRows" :key="row.label">
+						<dt>{{ row.label }}</dt>
+						<dd>{{ row.value }}</dd>
+					</template>
+				</dl>
 			</section>
 
 			<section :class="$style.section">
-				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.charter') }}</h2>
-				<dl :class="$style.charter">
-					<template v-for="entry in charter" :key="entry.key">
-						<dt>{{ entry.key }}</dt>
-						<dd>{{ entry.value }}</dd>
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.rulesStanding') }}</h2>
+				<h3 :class="$style.h3">{{ i18n.baseText('aon.agent.rulesDo') }}</h3>
+				<ul :class="$style.cards">
+					<li v-for="(item, i) in agent.charter.rules.do" :key="i" :class="$style.card">{{ item }}</li>
+				</ul>
+				<h3 :class="$style.h3">{{ i18n.baseText('aon.agent.rulesDont') }}</h3>
+				<ul :class="$style.cards">
+					<li v-for="(item, i) in agent.charter.rules.dont" :key="i" :class="$style.card">{{ item }}</li>
+				</ul>
+				<h3 :class="$style.h3">{{ i18n.baseText('aon.agent.rulesLearned') }}</h3>
+				<p v-if="agent.rules.length === 0" :class="$style.lede">
+					{{ i18n.baseText('aon.agent.none') }}
+				</p>
+				<ul v-else :class="$style.cards">
+					<li v-for="rule in agent.rules" :key="rule.id" :class="$style.card">
+						<div :class="$style.cardHead">
+							<N8nBadge :theme="statusTheme(rule.state)" size="small">{{ rule.state }}</N8nBadge>
+							<span :class="$style.meta">{{ ago(rule.createdAt) }}</span>
+						</div>
+						<p :class="$style.prose">{{ rule.text }}</p>
+						<span v-if="rule.reason" :class="$style.meta">{{ rule.reason }}</span>
+					</li>
+				</ul>
+			</section>
+
+			<section :class="$style.section">
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.skills') }}</h2>
+				<p v-if="agent.charter.skills.length === 0" :class="$style.lede">
+					{{ i18n.baseText('aon.agent.none') }}
+				</p>
+				<ul v-else :class="$style.cards">
+					<li v-for="(item, i) in agent.charter.skills" :key="i" :class="$style.card">{{ item }}</li>
+				</ul>
+			</section>
+
+			<section :class="$style.section">
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.tools') }}</h2>
+				<p v-if="agent.charter.tools.length === 0" :class="$style.lede">
+					{{ i18n.baseText('aon.agent.none') }}
+				</p>
+				<ul v-else :class="$style.cards">
+					<li v-for="(item, i) in agent.charter.tools" :key="i" :class="$style.card">{{ item }}</li>
+				</ul>
+			</section>
+
+			<section :class="$style.section">
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.guard') }}</h2>
+				<dl v-if="guardRows.length > 0" :class="$style.charter">
+					<template v-for="row in guardRows" :key="row.label">
+						<dt>{{ row.label }}</dt>
+						<dd>{{ row.value }}</dd>
 					</template>
 				</dl>
 			</section>
@@ -127,7 +218,7 @@ onMounted(async () => {
 							<tr>
 								<th>{{ i18n.baseText('aon.run.column.status') }}</th>
 								<th>{{ i18n.baseText('aon.run.column.deliverable') }}</th>
-								<th>{{ i18n.baseText('aon.run.column.trigger') }}</th>
+								<th>{{ i18n.baseText('aon.run.column.invokedBy') }}</th>
 								<th>{{ i18n.baseText('aon.run.column.model') }}</th>
 								<th :class="$style.num">{{ i18n.baseText('aon.run.column.cost') }}</th>
 								<th>{{ i18n.baseText('aon.run.column.started') }}</th>
@@ -148,7 +239,7 @@ onMounted(async () => {
 									<div v-if="run.help" :class="$style.help">{{ run.help }}</div>
 								</td>
 								<td>{{ run.deliverableName ?? run.deliverableId }}</td>
-								<td>{{ run.trigger }}</td>
+								<td>{{ run.invokedBy }}</td>
 								<td>{{ run.model ?? '—' }}</td>
 								<td :class="$style.num">{{ euro(run.costEur) }}</td>
 								<td :class="$style.when">{{ ago(run.startedAt ?? run.createdAt) }}</td>
@@ -159,21 +250,14 @@ onMounted(async () => {
 				</div>
 			</section>
 
-			<section :class="$style.section">
-				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.rules') }}</h2>
-				<p v-if="agent.rules.length === 0" :class="$style.lede">
-					{{ i18n.baseText('aon.agent.noRules') }}
-				</p>
-				<ul v-else :class="$style.cards">
-					<li v-for="rule in agent.rules" :key="rule.id" :class="$style.card">
-						<div :class="$style.cardHead">
-							<N8nBadge :theme="statusTheme(rule.state)" size="small">{{ rule.state }}</N8nBadge>
-							<span :class="$style.meta">{{ ago(rule.createdAt) }}</span>
-						</div>
-						<p :class="$style.prose">{{ rule.text }}</p>
-						<span v-if="rule.reason" :class="$style.meta">{{ rule.reason }}</span>
-					</li>
-				</ul>
+			<section v-if="otherRows.length > 0" :class="$style.section">
+				<h2 :class="$style.h2">{{ i18n.baseText('aon.agent.other') }}</h2>
+				<dl :class="$style.charter">
+					<template v-for="row in otherRows" :key="row.key">
+						<dt>{{ row.key }}</dt>
+						<dd>{{ row.value }}</dd>
+					</template>
+				</dl>
 			</section>
 		</template>
 	</div>
@@ -218,6 +302,13 @@ onMounted(async () => {
 	font-size: var(--font-size--lg);
 	margin: 0 0 var(--spacing--2xs);
 	color: var(--color--text--shade-1);
+}
+
+.h3 {
+	font-size: var(--font-size--sm);
+	font-weight: var(--font-weight--bold);
+	margin: var(--spacing--xs) 0 var(--spacing--4xs);
+	color: var(--color--text--tint-1);
 }
 
 .section {

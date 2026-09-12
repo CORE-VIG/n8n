@@ -15,7 +15,7 @@ const workspace = z
 	.max(64)
 	.optional()
 	.describe(
-		'Which workspace to use: a short name such as "main" or "site-audit". Files persist there between commands and conversations. Leave empty for "main".',
+		'Which workspace to use: a short name such as "main" or "site-audit". Files persist there between commands, conversations and Aon agent runs. Leave empty for "main".',
 	);
 
 const runSchema = {
@@ -38,7 +38,7 @@ const runSchema = {
 		.boolean()
 		.optional()
 		.describe(
-			'Lease the network for this one command (installing a package, fetching a page). Off by default; ask for it only when the command needs it.',
+			'Enable network access for this one command only (installing a package, fetching a page). Off by default; use it only when the command needs it and say that you did.',
 		),
 } satisfies z.ZodRawShape;
 

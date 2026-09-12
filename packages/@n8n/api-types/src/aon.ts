@@ -1,9 +1,4 @@
-/**
- * Aon inside n8n: what the Aon pages read.
- *
- * Agents, deliverables, runs and learned rules come from the retired
- * standalone Aon. Memory is the same corpus, searched by text and by meaning.
- */
+/** Types returned by the Aon agent and memory APIs. */
 
 export interface AonRunSummary {
 	id: string;
@@ -15,7 +10,7 @@ export interface AonRunSummary {
 	status: string;
 	attempt: number;
 	iteration: number;
-	trigger: string;
+	invokedBy: string;
 	model: string | null;
 	tokensIn: number;
 	tokensOut: number;
@@ -64,8 +59,24 @@ export interface AonAgentSummary {
 	lastRun: { id: string; status: string; createdAt: string; finishedAt: string | null } | null;
 }
 
+/** An agent's charter, grouped the way Aon defines an agent. Unknown keys land in `other`. */
+export interface AonCharterView {
+	orientation: { purpose: string | null; persona: string; owns: string[]; sources: string[] };
+	rules: { do: string[]; dont: string[] };
+	skills: string[];
+	tools: string[];
+	guard: {
+		tierCeiling: number | null;
+		breakerLimit: number | null;
+		escalateWhen: string | null;
+		budgetEurMonth: number | null;
+		modelBand: string | null;
+	};
+	other: Record<string, unknown>;
+}
+
 export interface AonAgentDetail extends AonAgentSummary {
-	charter: Record<string, unknown>;
+	charter: AonCharterView;
 	deliverables: AonDeliverableSummary[];
 	runs: AonRunSummary[];
 	rules: AonLearnedRuleSummary[];

@@ -4,6 +4,7 @@ import { Get, Param, RestController } from '@n8n/decorators';
 
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
 
+import { charterView } from './charter-view';
 import { AonAgentRepository } from './database/repositories/aon-agent.repository';
 import { AonDeliverableRepository } from './database/repositories/aon-deliverable.repository';
 import { AonLearnedRuleRepository } from './database/repositories/aon-learned-rule.repository';
@@ -65,7 +66,7 @@ export class AonAgentsController {
 			this.runs.listRecent({ agentId: agent.id, limit: RUNS_PER_AGENT }),
 			this.rules.listForAgent(agent.id),
 		]);
-		return { ...summary, charter: agent.charter, deliverables, runs, rules };
+		return { ...summary, charter: charterView(agent.charter, agent.persona), deliverables, runs, rules };
 	}
 }
 

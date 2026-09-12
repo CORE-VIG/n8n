@@ -37,7 +37,7 @@ export class AonRunRepository extends Repository<AonRun> {
 		const rows = await this.manager.query<RunRow[]>(
 			`SELECT r.id, r.agent_id AS "agentId", a.slug AS "agentSlug", a.name AS "agentName",
 				r.deliverable_id AS "deliverableId", d.name AS "deliverableName",
-				r.status, r.attempt, r.iteration, r.trigger, r.model,
+				r.status, r.attempt, r.iteration, r.trigger AS "invokedBy", r.model,
 				r.tokens_in AS "tokensIn", r.tokens_out AS "tokensOut", r.cost_eur AS "costEur", r.help,
 				r.started_at AS "startedAt", r.finished_at AS "finishedAt", r.created_at AS "createdAt"
 			FROM ${this.table(AonRun)} r

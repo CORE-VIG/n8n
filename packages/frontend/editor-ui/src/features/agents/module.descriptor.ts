@@ -27,7 +27,7 @@ const AgentSessionTimelineView = async (): Promise<unknown> =>
 
 export const AgentsModule: FrontendModuleDescription = {
 	id: 'agents',
-	name: 'Agents',
+	name: 'n8n agents',
 	description: 'Build and manage AI agents',
 	icon: 'robot',
 	modals: AGENTS_MODALS,
@@ -94,7 +94,7 @@ export const AgentsModule: FrontendModuleDescription = {
 	projectTabs: {
 		overview: [
 			{
-				label: 'Agents',
+				label: 'n8n agents',
 				value: AGENTS_LIST_VIEW,
 				preview: true,
 				insertAfter: VIEWS.WORKFLOWS,
@@ -105,7 +105,7 @@ export const AgentsModule: FrontendModuleDescription = {
 		],
 		project: [
 			{
-				label: 'Agents',
+				label: 'n8n agents',
 				value: PROJECT_AGENTS,
 				preview: true,
 				insertAfter: VIEWS.PROJECTS_WORKFLOWS,

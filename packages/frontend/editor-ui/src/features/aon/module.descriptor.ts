@@ -16,7 +16,7 @@ const AonAgentView = async () => await import('./views/AonAgentView.vue');
 export const AonModule: FrontendModuleDescription = {
 	id: 'aon',
 	name: 'Aon',
-	description: 'Your agents, your memory, and the assistant that builds for you.',
+	description: 'The assistant, Aon agents, memory, Hands and Guard.',
 	icon: 'sparkles',
 	routes: [
 		{
