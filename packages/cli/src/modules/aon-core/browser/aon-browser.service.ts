@@ -65,6 +65,10 @@ const MAX_TEXT_BYTES = 60 * 1024;
 const MAX_SCREENSHOT_BYTES = Math.floor(1.5 * 1024 * 1024);
 const MAX_LINKS = 200;
 const MAX_WAIT_STEP_MS = 5_000;
+/** `act()`'s own lease budget: 20 s headroom, plus every step's wait, plus 10 s a step, capped at 180 s. */
+const ACT_TIMEOUT_BASE_MS = 20_000;
+const ACT_TIMEOUT_PER_STEP_MS = 10_000;
+const ACT_TIMEOUT_CAP_MS = 180_000;
 
 // ─── The URL rules ─────────────────────────────────────────────────────────
 
@@ -386,7 +390,16 @@ export class AonBrowserService {
 		});
 	}
 
-	/** Run a bounded list of steps in one lease. Throws `BrowserOffline` or `UrlRefused` (a `navigate` step's URL) before the browser is touched. */
+	/**
+	 * Run a bounded list of steps in one lease. Throws `BrowserOffline` or
+	 * `UrlRefused` (a `navigate` step's URL) before the browser is touched.
+	 *
+	 * The lease gets its own budget instead of the 30 s read budget: a
+	 * multi-step act with `wait`s can genuinely need longer than one read
+	 * does, and the flat read budget was cutting steps short. The closing
+	 * `browser_snapshot` is best-effort: a timeout there must not throw away
+	 * the step results (and any screenshot) already collected.
+	 */
 	async act(steps: readonly AonBrowserActStep[]): Promise<AonBrowserActResult> {
 		const url = this.browserUrl();
 		if (!url) throw new BrowserOffline();
@@ -397,18 +410,26 @@ export class AonBrowserService {
 			if (!check.ok) throw new UrlRefused(check.reason);
 			return { ...step, url: check.url };
 		});
-		return await this.withLease(url, {}, async (session) => {
+		const stepWaitMs = checked.reduce(
+			(sum, step) => sum + (step.kind === 'wait' ? Math.max(0, Math.min(step.ms, MAX_WAIT_STEP_MS)) : 0),
+			0,
+		);
+		const timeoutMs = Math.min(ACT_TIMEOUT_CAP_MS, ACT_TIMEOUT_BASE_MS + stepWaitMs + ACT_TIMEOUT_PER_STEP_MS * checked.length);
+		return await this.withLease(url, { timeoutMs }, async (session) => {
 			const results: AonBrowserStepResult[] = [];
 			for (const step of checked) {
 				results.push(await this.runStep(session, step));
 			}
-			const snap = await session.call('browser_snapshot', { max_chars: MAX_TEXT_BYTES });
+			let snapshot: string | null = null;
+			let snapshotError: string | null = null;
+			try {
+				const snap = await session.call('browser_snapshot', { max_chars: MAX_TEXT_BYTES });
+				snapshot = clipUtf8(renderSnapshot(snap.text).text, MAX_TEXT_BYTES);
+			} catch (error) {
+				snapshotError = error instanceof Error ? error.message : String(error);
+			}
 			const screenshot = [...results].reverse().find((r) => r.kind === 'screenshot' && r.image)?.image ?? null;
-			return {
-				steps: results,
-				snapshot: clipUtf8(renderSnapshot(snap.text).text, MAX_TEXT_BYTES),
-				screenshot,
-			};
+			return { steps: results, snapshot, screenshot, error: snapshotError };
 		});
 	}
 

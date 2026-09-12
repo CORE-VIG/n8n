@@ -27,7 +27,7 @@ const telegramBody = z
 	.object({
 		chatId: z.union([z.string(), z.number()]).transform((v) => String(v)),
 		text: z.string().max(20_000).optional().default(''),
-		from: z.object({ id: z.union([z.string(), z.number()]).optional(), username: z.string().optional() }).optional(),
+		from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional() }),
 		/** A Telegram voice note, already downloaded and base64'd by the bridge workflow. */
 		audio: telegramAudio.optional(),
 		/** Speak the first chunk of the reply back, when the sidecar is up. */
@@ -60,10 +60,15 @@ export function chunkForTelegram(text: string, size = TELEGRAM_CHUNK): string[] 
  * turn, and the reply goes back. A workflow (Telegram Trigger → HTTP Request →
  * Telegram) carries the messages; this endpoint decides who is the owner.
  *
- * Two locks, both required: the caller holds the owner's MCP API key (the
- * workflow's Header Auth credential), and the chat id is one the owner listed
- * in AON_TELEGRAM_CHAT_IDS. A stranger who finds the bot gets nothing, and a
- * scheduled or third-party message never passes as the owner speaking.
+ * Three locks, all required: the caller holds the owner's MCP API key (the
+ * workflow's Header Auth credential), the chat id is one the owner listed in
+ * AON_TELEGRAM_CHAT_IDS, and the *sender* (`from.id`) is one the owner listed
+ * in AON_TELEGRAM_USER_IDS (or, when that is empty, one of the same chat ids
+ * — a private chat's id equals its owner's user id). The chat id alone is not
+ * enough: anyone who can post into an allowed chat — a group the owner is
+ * merely a member of, for instance — would otherwise speak as him. A stranger
+ * who finds the bot gets nothing, and a scheduled or third-party message
+ * never passes as the owner speaking.
  */
 @RestController('/aon/bridge')
 export class AonBridgeController {
@@ -91,7 +96,7 @@ export class AonBridgeController {
 
 		const parsed = telegramBody.safeParse(req.body);
 		if (!parsed.success) throw new BadRequestError(parsed.error.errors[0]?.message ?? 'bad body');
-		const { chatId, text, audio, wantAudio } = parsed.data;
+		const { chatId, text, from, audio, wantAudio } = parsed.data;
 
 		const allowed = this.config.aon.telegramChatIds
 			.split(',')
@@ -101,6 +106,16 @@ export class AonBridgeController {
 			throw new ForbiddenError(
 				`Chat ${chatId} is not listed as the owner. Add it to AON_TELEGRAM_CHAT_IDS to open the bridge for it.`,
 			);
+		}
+
+		const userAllowList = this.config.aon.telegramUserIds.trim()
+			? this.config.aon.telegramUserIds
+					.split(',')
+					.map((s) => s.trim())
+					.filter(Boolean)
+			: allowed;
+		if (!userAllowList.includes(String(from.id))) {
+			throw new ForbiddenError('This bot answers its owner only.');
 		}
 
 		const threadId = stableUuid('aon-telegram', `${owner.id}:${chatId}`);

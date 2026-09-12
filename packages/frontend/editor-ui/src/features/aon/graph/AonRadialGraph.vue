@@ -4,13 +4,24 @@
  * `/root/VIG-VICORE/components/console/graph/graph-canvas.tsx` and
  * `/root/VIG-VICORE/lib/console/graph-data.ts` into plain canvas 2D.
  *
- * Core at the centre; one hub per cluster, spaced evenly around it; each
- * cluster's entities sit on two rings around their hub, the ones with more
- * links nearer the hub. Edges are curved chords — core→hub faint, hub→item
- * per cluster, item→item inside a cluster brighter than the ones that cross
- * clusters. Hover dims everything outside the hovered node's neighbourhood
- * and shows a HUD line; a hub click focuses its cluster (dims the rest);
- * an item click selects it.
+ * Core at the centre; one hub per cluster, on a ring sized off the canvas so
+ * the layout fills it edge to edge; each cluster gets a sector of the circle
+ * sized by its share of the nodes, and its items sit on up to three rings
+ * inside that sector — closer rings for higher-degree items, clamped so a
+ * cluster never spills into its neighbour's sector. Edges are curved chords
+ * — core→hub faint, hub→item per cluster, item→item inside a cluster
+ * brighter than the ones that cross clusters.
+ *
+ * With ~200 nodes on screen at once, labelling every node is unreadable, so
+ * only the core, the cluster hubs, and the top-10 nodes by degree are always
+ * labelled; everything else shows a label only on hover (the one node under
+ * the cursor) or while its cluster is focused (up to 40 of that cluster's
+ * nodes). Labels get a dark backing and a simple placed-box collision check
+ * so two never overlap — hubs and the core always win that check.
+ *
+ * Hover dims everything outside the hovered node's neighbourhood and shows
+ * its label; a hub click (or its legend entry) focuses its cluster (dims
+ * the rest, expands its label budget); an item click selects it.
  */
 import type { AonMemoryGraph } from '@n8n/api-types';
 import { useI18n } from '@n8n/i18n';
@@ -49,12 +60,38 @@ function hexA(hex: string, a: number): string {
 	return `rgba(${r},${g},${b},${a})`;
 }
 
+// -- layout constants -------------------------------------------------------
+// Outer ring radius: leaves a ~10% margin around the layout for labels.
+const OUTER_SCALE = 0.46;
+// Cluster hubs sit on a ring at this fraction of the outer ring.
+const HUB_FRAC = 0.42;
+// Floor sector angle so a tiny cluster still gets a usable wedge, before
+// every cluster's raw share is renormalised back to sum to a full circle.
+const MIN_SECTOR = Math.PI * 2 * 0.03;
+// Radians of clear space kept at each edge of a cluster's sector.
+const SECTOR_PAD = 0.05;
+// Radians between two items on the same ring — sets how many fit per ring.
+const MIN_ITEM_ANGLE = 0.055;
+const ITEM_R_MIN = 2.5;
+const ITEM_R_MAX = 7;
+
+// -- label constants ----------------------------------------------------
+const TOP_DEGREE_LABELS = 10;
+const MAX_FOCUS_LABELS = 40;
+
+// -- edge constants -------------------------------------------------------
+const EDGE_ALPHA_BASE = 0.25;
+const EDGE_ALPHA_CROSS = 0.12;
+const EDGE_ALPHA_HOVER = 0.9;
+const EDGE_DIM_MULT = 0.15;
+
 type Kind = 'core' | 'hub' | 'item';
 interface RNode {
 	kind: Kind;
 	id: string | null;
 	label: string;
 	cluster: number;
+	degree: number;
 	r: number;
 	x: number;
 	y: number;
@@ -75,47 +112,104 @@ interface Pulse {
 }
 
 function layout(graph: AonMemoryGraph): { nodes: RNode[]; edges: REdge[] } {
-	const nodes: RNode[] = [{ kind: 'core', id: null, label: i18n.baseText('aon.graph.core'), cluster: -1, r: 12, x: 0, y: 0, adj: [], sx: 0, sy: 0 }];
+	const nodes: RNode[] = [
+		{
+			kind: 'core',
+			id: null,
+			label: i18n.baseText('aon.graph.core'),
+			cluster: -1,
+			degree: 0,
+			r: 12,
+			x: 0,
+			y: 0,
+			adj: [],
+			sx: 0,
+			sy: 0,
+		},
+	];
 	const edges: REdge[] = [];
-	const N = Math.max(1, graph.clusters.length);
-	const hubIndexByCluster = new Map<number, number>();
+
+	// Real-relation degree — drives item radius, the top-10 label set, and
+	// which items sit on the ring closest to their hub.
+	const degree = new Map<string, number>();
+	for (const e of graph.edges) {
+		degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+		degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+	}
+
+	const TWO_PI = Math.PI * 2;
+	const totalCount = graph.clusters.reduce((s, c) => s + Math.max(1, c.count), 0) || Math.max(1, graph.clusters.length);
+	const rawAngles = graph.clusters.map((c) => Math.max(MIN_SECTOR, (Math.max(1, c.count) / totalCount) * TWO_PI));
+	const rawSum = rawAngles.reduce((s, a) => s + a, 0) || TWO_PI;
+	// Renormalise so every cluster's sector — floor included — sums to a full circle.
+	const sectorAngles = rawAngles.map((a) => (a / rawSum) * TWO_PI);
+
+	let cursor = -Math.PI / 2;
 
 	graph.clusters.forEach((cl, i) => {
-		const th = -Math.PI / 2 + i * ((Math.PI * 2) / N);
-		const hx = Math.cos(th) * 0.42;
-		const hy = Math.sin(th) * 0.42;
+		const sectorAngle = sectorAngles[i];
+		const startAngle = cursor;
+		const hubAngle = startAngle + sectorAngle / 2;
+		cursor += sectorAngle;
+
+		const hx = Math.cos(hubAngle) * HUB_FRAC;
+		const hy = Math.sin(hubAngle) * HUB_FRAC;
 		const hubIdx = nodes.length;
-		hubIndexByCluster.set(cl.index, hubIdx);
-		nodes.push({ kind: 'hub', id: null, label: cl.kind, cluster: cl.index, r: 8, x: hx, y: hy, adj: [], sx: 0, sy: 0 });
+		nodes.push({
+			kind: 'hub',
+			id: null,
+			label: `${cl.kind} · ${cl.count}`,
+			cluster: cl.index,
+			degree: cl.count,
+			r: 8,
+			x: hx,
+			y: hy,
+			adj: [],
+			sx: 0,
+			sy: 0,
+		});
 		edges.push({ a: 0, b: hubIdx, kind: 'coreHub', cluster: cl.index });
 
 		const items = graph.nodes.filter((n) => n.cluster === cl.index).slice(0, MAX_NODES);
-		const degree = new Map<string, number>();
-		for (const e of graph.edges) {
-			degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
-			degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
-		}
 		const ordered = [...items].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0));
-		const M = Math.max(1, ordered.length);
-		ordered.forEach((node, j) => {
-			const a2 = th + j * ((Math.PI * 2) / M);
-			const ring = j < M / 2 ? 0.14 : 0.24;
-			const ix = hx + Math.cos(a2) * ring;
-			const iy = hy + Math.sin(a2) * ring;
-			const idx = nodes.length;
-			nodes.push({
-				kind: 'item',
-				id: node.id,
-				label: node.label,
-				cluster: cl.index,
-				r: 3.4 + Math.min(3, Math.sqrt(Math.max(0, node.weight))),
-				x: ix,
-				y: iy,
-				adj: [],
-				sx: 0,
-				sy: 0,
+		const M = ordered.length;
+
+		// Ring capacity from the sector's usable angle — items that don't fit
+		// on ring 0 spill to ring 1, then ring 2 (overflow: still spread
+		// evenly across the sector, just denser).
+		const usable = Math.max(0, sectorAngle - SECTOR_PAD * 2);
+		const cap = Math.max(1, Math.floor(usable / MIN_ITEM_ANGLE));
+		const rings = [ordered.slice(0, cap), ordered.slice(cap, cap * 2), ordered.slice(cap * 2)];
+		// Bigger clusters push their rings further out to use the extra room.
+		const growth = Math.min(1, M / 50);
+		const ringFracs = [0.3 + growth * 0.05, 0.58 + growth * 0.08, 0.9];
+
+		rings.forEach((ringItems, ringIdx) => {
+			const count = ringItems.length;
+			if (count === 0) return;
+			const radiusFrac = HUB_FRAC + (1 - HUB_FRAC) * ringFracs[ringIdx];
+			ringItems.forEach((node, j) => {
+				const t = (j + 0.5) / count;
+				const angle = startAngle + SECTOR_PAD + t * usable;
+				const ix = Math.cos(angle) * radiusFrac;
+				const iy = Math.sin(angle) * radiusFrac;
+				const idx = nodes.length;
+				const deg = degree.get(node.id) ?? 0;
+				nodes.push({
+					kind: 'item',
+					id: node.id,
+					label: node.label,
+					cluster: cl.index,
+					degree: deg,
+					r: Math.min(ITEM_R_MAX, Math.max(ITEM_R_MIN, ITEM_R_MIN + Math.sqrt(deg) * 1.4)),
+					x: ix,
+					y: iy,
+					adj: [],
+					sx: 0,
+					sy: 0,
+				});
+				edges.push({ a: hubIdx, b: idx, kind: 'hubItem', cluster: cl.index });
 			});
-			edges.push({ a: hubIdx, b: idx, kind: 'hubItem', cluster: cl.index });
 		});
 	});
 
@@ -146,15 +240,42 @@ const focusCluster = ref<number | null>(null);
 const selectedId = ref<string | null>(null);
 
 let model = { nodes: [] as RNode[], edges: [] as REdge[] };
+// The top-10-by-degree item nodes — recomputed only when the graph changes,
+// not every frame.
+let topDegreeIndices = new Set<number>();
 let pulses: Pulse[] = [];
 let dpr = 1;
 let raf = 0;
 let running = false;
 let hovering = false;
 let ro: ResizeObserver | null = null;
+// The dark label backing colour — read once from the host's own computed
+// background (the theme-driven equivalent of the sibling graphs' hardcoded
+// dark canvas surface) so it always matches the canvas underneath it.
+let labelBg = 'rgba(10,10,13,0.7)';
+
+function resolveLabelBg() {
+	const el = host.value;
+	if (!el || typeof window === 'undefined') return;
+	const bg = window.getComputedStyle(el).backgroundColor;
+	const match = /rgba?\(([^)]+)\)/.exec(bg);
+	if (!match) return;
+	const parts = match[1].split(',').map((part) => Number.parseFloat(part.trim()));
+	if (parts.length >= 3 && parts.every((part) => !Number.isNaN(part))) {
+		labelBg = `rgba(${parts[0]},${parts[1]},${parts[2]},0.7)`;
+	}
+}
 
 function rebuild() {
 	model = props.graph ? layout(props.graph) : { nodes: [], edges: [] };
+	topDegreeIndices = new Set(
+		model.nodes
+			.map((n, i) => ({ n, i }))
+			.filter((entry) => entry.n.kind === 'item')
+			.sort((a, b) => b.n.degree - a.n.degree)
+			.slice(0, TOP_DEGREE_LABELS)
+			.map((entry) => entry.i),
+	);
 	pulses = [];
 	hoverIdx.value = null;
 	focusCluster.value = null;
@@ -162,9 +283,134 @@ function rebuild() {
 }
 watch(() => props.graph, rebuild, { immediate: true });
 
-function toScreen(x: number, y: number, cx: number, cy: number, field: number) {
-	return { x: cx + x * field, y: cy + y * field };
+function toScreen(x: number, y: number, cx: number, cy: number, outer: number) {
+	return { x: cx + x * outer, y: cy + y * outer };
 }
+
+// -- labels -----------------------------------------------------------------
+
+interface LabelBox {
+	x0: number;
+	y0: number;
+	x1: number;
+	y1: number;
+}
+
+function boxesOverlap(a: LabelBox, b: LabelBox): boolean {
+	return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+}
+
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+	const rr = Math.min(r, w / 2, h / 2);
+	ctx.beginPath();
+	ctx.moveTo(x + rr, y);
+	ctx.lineTo(x + w - rr, y);
+	ctx.arcTo(x + w, y, x + w, y + rr, rr);
+	ctx.lineTo(x + w, y + h - rr);
+	ctx.arcTo(x + w, y + h, x + w - rr, y + h, rr);
+	ctx.lineTo(x + rr, y + h);
+	ctx.arcTo(x, y + h, x, y + h - rr, rr);
+	ctx.lineTo(x, y + rr);
+	ctx.arcTo(x, y, x + rr, y, rr);
+	ctx.closePath();
+}
+
+/**
+ * Draws one label, anchored just past the node along the direction from the
+ * centre through it (so a cluster's labels fan outward from its hub without
+ * crossing). Skips the draw — and never reserves the box — unless
+ * `mustPlace` or the box clears every previously placed one.
+ */
+function drawLabel(
+	ctx: CanvasRenderingContext2D,
+	placed: LabelBox[],
+	node: RNode,
+	font: string,
+	textColor: string,
+	alpha: number,
+	mustPlace: boolean,
+): void {
+	const mag = Math.hypot(node.x, node.y);
+	const dirX = mag > 0 ? node.x / mag : 0;
+	const dirY = mag > 0 ? node.y / mag : 1;
+	const gap = node.r + 8;
+	const anchorX = node.sx + dirX * gap;
+	const anchorY = node.sy + dirY * gap;
+	const align: CanvasTextAlign = dirX >= 0 ? 'left' : 'right';
+
+	ctx.font = font;
+	const textW = ctx.measureText(node.label).width;
+	const textH = 12;
+	const boxPad = 3;
+	const x0 = align === 'left' ? anchorX - boxPad : anchorX - textW - boxPad;
+	const x1 = align === 'left' ? anchorX + textW + boxPad : anchorX + boxPad;
+	const y0 = anchorY - textH / 2 - boxPad;
+	const y1 = anchorY + textH / 2 + boxPad;
+	const box: LabelBox = { x0, y0, x1, y1 };
+
+	if (!mustPlace) {
+		for (const p of placed) {
+			if (boxesOverlap(box, p)) return;
+		}
+	}
+	placed.push(box);
+
+	ctx.globalAlpha = alpha;
+	ctx.fillStyle = labelBg;
+	roundedRect(ctx, x0, y0, x1 - x0, y1 - y0, 4);
+	ctx.fill();
+	ctx.fillStyle = textColor;
+	ctx.textAlign = align;
+	ctx.textBaseline = 'middle';
+	ctx.fillText(node.label, anchorX, anchorY);
+	ctx.globalAlpha = 1;
+}
+
+/**
+ * Core and hubs always label. Beyond that: the hovered item (if any), the
+ * top-10-by-degree items, and — while a cluster is focused — up to 40 more
+ * of that cluster's items. Each of those is subject to the collision check.
+ */
+function drawLabels(ctx: CanvasRenderingContext2D) {
+	const placed: LabelBox[] = [];
+
+	const core = model.nodes[0];
+	if (core) drawLabel(ctx, placed, core, '600 11px sans-serif', '#eef4f8', 1, true);
+
+	for (const n of model.nodes) {
+		if (n.kind !== 'hub') continue;
+		const relevant = focusCluster.value === null || n.cluster === focusCluster.value;
+		drawLabel(ctx, placed, n, '600 10px sans-serif', clusterColor(n.cluster), relevant ? 1 : 0.4, true);
+	}
+
+	const candidates: number[] = [];
+	const seen = new Set<number>();
+	const addCandidate = (idx: number) => {
+		if (!seen.has(idx)) {
+			seen.add(idx);
+			candidates.push(idx);
+		}
+	};
+	if (hoverIdx.value !== null && model.nodes[hoverIdx.value]?.kind === 'item') addCandidate(hoverIdx.value);
+	for (const idx of topDegreeIndices) addCandidate(idx);
+	if (focusCluster.value !== null) {
+		const clusterItems = model.nodes
+			.map((n, i) => ({ n, i }))
+			.filter((entry) => entry.n.kind === 'item' && entry.n.cluster === focusCluster.value)
+			.sort((a, b) => b.n.degree - a.n.degree)
+			.slice(0, MAX_FOCUS_LABELS);
+		for (const entry of clusterItems) addCandidate(entry.i);
+	}
+
+	for (const idx of candidates) {
+		const n = model.nodes[idx];
+		const relevant = focusCluster.value === null || n.cluster === focusCluster.value;
+		const alpha = idx === hoverIdx.value ? 1 : relevant ? 0.85 : 0.25;
+		drawLabel(ctx, placed, n, '400 9.5px monospace', '#aeb9c2', alpha, false);
+	}
+}
+
+// -- draw ---------------------------------------------------------------
 
 function draw() {
 	const el = canvas.value;
@@ -173,12 +419,12 @@ function draw() {
 	const { w, h } = box.value;
 	const cx = w / 2;
 	const cy = h / 2;
-	const field = Math.min(w, h) * 0.42;
+	const outer = Math.min(w, h) * OUTER_SCALE;
 	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 	ctx.clearRect(0, 0, w, h);
 
 	for (const n of model.nodes) {
-		const s = toScreen(n.x, n.y, cx, cy, field);
+		const s = toScreen(n.x, n.y, cx, cy, outer);
 		n.sx = s.x;
 		n.sy = s.y;
 	}
@@ -210,16 +456,16 @@ function draw() {
 		const a = model.nodes[e.a];
 		const b = model.nodes[e.b];
 		const relevant = focusCluster.value === null || e.cluster === focusCluster.value;
-		let alpha = e.kind === 'coreHub' ? 0.18 : e.kind === 'cross' ? 0.08 : 0.14;
-		if (!relevant) alpha *= 0.15;
+		let alpha = e.kind === 'cross' ? EDGE_ALPHA_CROSS : EDGE_ALPHA_BASE;
+		if (!relevant) alpha *= EDGE_DIM_MULT;
 		let color = 'rgba(150,178,198,1)';
 		if (e.cluster >= 0) color = clusterColor(e.cluster);
 		if (neighbourEdges) {
-			if (neighbourEdges.has(ei)) alpha = 0.8;
+			if (neighbourEdges.has(ei)) alpha = EDGE_ALPHA_HOVER;
 			else alpha *= 0.12;
 		}
 		ctx.strokeStyle = e.cluster >= 0 ? hexA(color, alpha) : `rgba(150,178,198,${alpha})`;
-		ctx.lineWidth = neighbourEdges?.has(ei) ? 1.6 : 1;
+		ctx.lineWidth = 1;
 		const mx = (a.sx + b.sx) / 2 + (b.sy - a.sy) * 0.12;
 		const my = (a.sy + b.sy) / 2 - (b.sx - a.sx) * 0.12;
 		ctx.beginPath();
@@ -245,7 +491,6 @@ function draw() {
 		ctx.restore();
 	}
 
-	ctx.textBaseline = 'middle';
 	for (let ni = 0; ni < model.nodes.length; ni++) {
 		const n = model.nodes[ni];
 		const relevant = n.kind === 'core' || focusCluster.value === null || n.cluster === focusCluster.value;
@@ -261,14 +506,10 @@ function draw() {
 		ctx.arc(n.sx, n.sy, n.r * (ni === hoverIdx.value ? 1.3 : 1) * (selectedId.value === n.id ? 1.4 : 1), 0, Math.PI * 2);
 		ctx.fill();
 		ctx.shadowBlur = 0;
-		if (n.kind !== 'item' || ni === hoverIdx.value || inHood) {
-			ctx.font = n.kind === 'core' ? '600 11px sans-serif' : n.kind === 'hub' ? '600 10px sans-serif' : '400 9.5px monospace';
-			ctx.fillStyle = n.kind === 'item' ? '#aeb9c2' : color;
-			ctx.textAlign = n.sx > cx ? 'left' : 'right';
-			ctx.fillText(n.label, n.sx + (n.sx > cx ? n.r + 6 : -(n.r + 6)), n.sy);
-		}
 		ctx.globalAlpha = 1;
 	}
+
+	drawLabels(ctx);
 }
 
 function tick() {
@@ -352,6 +593,12 @@ function onClick(ev: MouseEvent) {
 	draw();
 }
 
+/** Legend entry click — same effect as clicking that cluster's hub. */
+function focusClusterFromLegend(index: number) {
+	focusCluster.value = focusCluster.value === index ? null : index;
+	draw();
+}
+
 function onVisibility() {
 	maybeRun();
 }
@@ -359,6 +606,7 @@ function onVisibility() {
 onMounted(() => {
 	const el = host.value;
 	if (!el) return;
+	resolveLabelBg();
 	ro = new ResizeObserver(([entry]) => {
 		const r = entry.contentRect;
 		box.value = { w: Math.round(r.width), h: Math.round(r.height) };
@@ -393,6 +641,19 @@ const hasData = computed(() => model.nodes.length > 1);
 		<button v-if="focusCluster !== null" type="button" :class="$style.reset" @click="focusCluster = null; draw()">
 			{{ i18n.baseText('aon.graph.wholeGraph') }}
 		</button>
+
+		<div v-if="graph && graph.clusters.length > 0" :class="$style.legend">
+			<button
+				v-for="cl in graph.clusters"
+				:key="cl.index"
+				type="button"
+				:class="[$style.legendItem, focusCluster === cl.index && $style.legendOn]"
+				@click="focusClusterFromLegend(cl.index)"
+			>
+				<span :class="$style.legendDot" :style="{ background: clusterColor(cl.index) }" />
+				{{ cl.kind }}
+			</button>
+		</div>
 
 		<p v-if="!loading && !hasData" :class="$style.empty">{{ i18n.baseText('aon.graph.empty') }}</p>
 		<p v-else-if="loading" :class="$style.empty">{{ i18n.baseText('aon.graph.loading') }}</p>
@@ -431,6 +692,42 @@ const hasData = computed(() => model.nodes.length > 1);
 	background: rgba(10, 10, 12, 0.75);
 	color: #eef4f8;
 	cursor: pointer;
+}
+
+.legend {
+	position: absolute;
+	left: var(--spacing--2xs);
+	bottom: var(--spacing--2xs);
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing--4xs);
+	max-width: calc(100% - var(--spacing--xl));
+}
+
+.legendItem {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--spacing--4xs);
+	font: inherit;
+	font-size: var(--font-size--3xs);
+	padding: var(--spacing--4xs) var(--spacing--3xs);
+	border: none;
+	border-radius: var(--radius);
+	background: rgba(10, 10, 12, 0.75);
+	color: rgba(238, 244, 248, 0.75);
+	cursor: pointer;
+}
+
+.legendOn {
+	background: rgba(238, 244, 248, 0.18);
+	color: #eef4f8;
+}
+
+.legendDot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex: none;
 }
 
 .empty {

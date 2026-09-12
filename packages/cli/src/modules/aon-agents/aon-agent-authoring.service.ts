@@ -15,6 +15,16 @@ import { AonRunRepository } from './database/repositories/aon-run.repository';
 
 const RUNS_PER_AGENT = 20;
 const SLUG_RE = /^[a-z0-9-]{2,40}$/;
+/** No charter, owner included, may set a standing monthly budget above this. */
+const MAX_BUDGET_EUR_MONTH = 1000;
+
+/**
+ * Who is authoring the charter: the owner (unrestricted), or an agent acting
+ * through its own tool call, which may not hand out a tier ceiling above its
+ * own. The REST controller is owner-only, so it always passes `owner`; the
+ * MCP tools service resolves this from the request's Guard identity.
+ */
+export type AgentAuthoringCaller = { kind: 'owner' } | { kind: 'agent'; tierCeiling: number };
 
 function slugifyName(name: string): string {
 	const slug = name
@@ -104,7 +114,11 @@ export class AonAgentAuthoringService {
 		return deliverable;
 	}
 
-	async createAgent(input: CreateAgentInput, createdBy: string): Promise<AonAgentDetail> {
+	async createAgent(
+		input: CreateAgentInput,
+		createdBy: string,
+		caller: AgentAuthoringCaller = { kind: 'owner' },
+	): Promise<AonAgentDetail> {
 		if (!SLUG_RE.test(input.slug)) {
 			throw new BadRequestError('slug must be lowercase letters, digits and hyphens, 2 to 40 characters.');
 		}
@@ -115,20 +129,40 @@ export class AonAgentAuthoringService {
 			slug: input.slug,
 			name: input.name,
 			persona: input.persona ?? '',
-			charter: charterRawFrom(input.charter),
+			charter: charterRawFrom(this.sanitizeCharter(input.charter, caller)),
 			createdBy,
 		});
 		return await this.getDetail(input.slug);
 	}
 
-	async updateCharter(slug: string, input: UpdateCharterInput): Promise<AonAgentDetail> {
+	async updateCharter(
+		slug: string,
+		input: UpdateCharterInput,
+		caller: AgentAuthoringCaller = { kind: 'owner' },
+	): Promise<AonAgentDetail> {
 		const agent = await this.resolveAgent(slug);
 		await this.agents.mergeCharter(agent.id, {
 			name: input.name,
 			persona: input.persona,
-			charterPatch: input.charter ? charterRawFrom(input.charter) : undefined,
+			charterPatch: input.charter ? charterRawFrom(this.sanitizeCharter(input.charter, caller)) : undefined,
 		});
 		return await this.getDetail(slug);
+	}
+
+	/**
+	 * Caps a charter's budget instance-wide, and, when an agent is authoring
+	 * (not the owner), refuses a tier ceiling above the caller's own — an
+	 * agent may never hand a charter it writes more room than it has itself.
+	 */
+	private sanitizeCharter(charter: AonCharterInput, caller: AgentAuthoringCaller): AonCharterInput {
+		const out: AonCharterInput = { ...charter };
+		if (out.budgetEurMonth !== undefined) out.budgetEurMonth = Math.min(out.budgetEurMonth, MAX_BUDGET_EUR_MONTH);
+		if (out.tierCeiling !== undefined && caller.kind === 'agent' && out.tierCeiling > caller.tierCeiling) {
+			throw new BadRequestError(
+				`An agent may not set a tier ceiling (${out.tierCeiling}) above its own (${caller.tierCeiling}).`,
+			);
+		}
+		return out;
 	}
 
 	async createDeliverable(agentSlug: string, input: DeliverableAuthoringInput): Promise<AonDeliverableSummary> {
@@ -188,6 +222,14 @@ export class AonAgentAuthoringService {
 		const agent = await this.resolveAgent(agentSlug);
 		const deleted = await this.deliverables.deleteForAgent(deliverableId, agent.id);
 		if (!deleted) throw new NotFoundError(`There is no deliverable ${deliverableId} for ${agentSlug}.`);
+	}
+
+	/** Only a draft or paused agent may be deleted, and only when nothing of it is in flight; its deliverables and runs go with it (cascade). */
+	async deleteAgent(slug: string): Promise<void> {
+		const agent = await this.resolveAgent(slug);
+		if (agent.status === 'active') throw new BadRequestError(`${slug} is active; pause it before deleting it.`);
+		if (await this.runs.hasInFlightForAgent(agent.id)) throw new BadRequestError(`${slug} has a run in flight; stop it first.`);
+		await this.agents.delete({ id: agent.id });
 	}
 
 	async setStatus(slug: string, status: string): Promise<void> {

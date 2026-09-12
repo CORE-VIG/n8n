@@ -123,7 +123,7 @@ export class AonGraphService {
 				this.chunks.countAll(),
 				this.sources.countAll(),
 				this.sources.countByOrigin(SKY_TOP_ORIGINS),
-				this.sourcesByKind(),
+				this.sources.countByKind(),
 				this.entities.countByKind(),
 				this.facts.countByStatus(),
 				this.entities.countLive(),
@@ -146,22 +146,6 @@ export class AonGraphService {
 			facts: factsTotal,
 			observations: observationsTotal,
 		};
-	}
-
-	/**
-	 * Sources grouped by kind. `AonSourceRepository` (another module's file)
-	 * has no such method, so this reads through its inherited query builder
-	 * rather than adding one.
-	 */
-	private async sourcesByKind(): Promise<Array<{ kind: string; count: number }>> {
-		const rows = await this.sources
-			.createQueryBuilder('s')
-			.select('s.kind', 'kind')
-			.addSelect('COUNT(*)::int', 'count')
-			.groupBy('s.kind')
-			.orderBy('count', 'DESC')
-			.getRawMany<{ kind: string; count: number | string }>();
-		return rows.map((r) => ({ kind: r.kind, count: Number(r.count) }));
 	}
 }
 

@@ -28,6 +28,7 @@ const skillsError = ref<string | null>(null);
 const persona = ref('');
 const talkModel = ref('');
 const budgetEurMonth = ref(0);
+const extractBudgetEurMonth = ref(0);
 
 const saving = ref(false);
 const savedFlash = ref(false);
@@ -48,6 +49,7 @@ async function load() {
 		persona.value = view.persona;
 		talkModel.value = view.talkModel;
 		budgetEurMonth.value = view.budgetEurMonth;
+		extractBudgetEurMonth.value = view.extractBudgetEurMonth;
 		error.value = null;
 	} catch (e) {
 		error.value = errorMessage(e);
@@ -78,6 +80,7 @@ async function save() {
 			persona: persona.value,
 			talkModel: talkModel.value,
 			budgetEurMonth: budgetEurMonth.value,
+			extractBudgetEurMonth: extractBudgetEurMonth.value,
 		});
 		settings.value = updated;
 		flashSaved();
@@ -155,6 +158,17 @@ const parts = computed(() => settings.value?.parts ?? null);
 					:controls="false"
 					data-test-id="aon-settings-budget"
 					@update:model-value="(v) => (budgetEurMonth = v ?? 0)"
+				/>
+
+				<p :class="$style.lede">{{ i18n.baseText('aon.settings.extractBudget') }}</p>
+				<N8nInputNumber
+					:model-value="extractBudgetEurMonth"
+					:min="0"
+					:max="200"
+					:precision="0"
+					:controls="false"
+					data-test-id="aon-settings-extract-budget"
+					@update:model-value="(v) => (extractBudgetEurMonth = v ?? 0)"
 				/>
 
 				<div :class="$style.saveRow">

@@ -21,8 +21,10 @@ export const AON_OP_CLASSES: readonly AonGuardOpClass[] = [
 	{ opClass: 'workflow.test', tier: 2, label: 'Test or run a workflow manually' },
 	{ opClass: 'hands.run', tier: 2, label: 'Run a command in a workspace' },
 	{ opClass: 'n8n-agent.execute', tier: 2, label: 'Call an n8n agent' },
+	{ opClass: 'run.start', tier: 2, label: "Start an agent's run" },
 	{ opClass: 'workflow.publish', tier: 3, label: 'Publish, unpublish or archive a workflow' },
 	{ opClass: 'n8n-agent.publish', tier: 3, label: 'Publish, unpublish or delete an n8n agent, or change its integrations' },
+	{ opClass: 'agent.write', tier: 3, label: "Create or change an agent's charter, deliverables or status" },
 	{ opClass: 'hands.network', tier: 3, label: 'Give a command the network' },
 	{ opClass: 'web.act', tier: 3, label: 'Act on a web page: click, type, submit' },
 	{ opClass: 'run.deliver', tier: 3, label: 'Accept a run\'s output as delivered' },
@@ -62,6 +64,11 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	hands_read_file: 'read',
 	hands_list_files: 'read',
 	memory_search: 'read',
+	memory_entity: 'read',
+	memory_facts: 'read',
+	aon_agents: 'read',
+	aon_agent: 'read',
+	aon_runs: 'read',
 	// tier 1
 	create_workflow_from_code: 'workflow.write',
 	update_workflow: 'workflow.write',
@@ -88,6 +95,7 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	execute_workflow: 'workflow.test',
 	hands_run: 'hands.run',
 	call_agent: 'n8n-agent.execute',
+	aon_run_start: 'run.start',
 	// tier 3
 	publish_workflow: 'workflow.publish',
 	unpublish_workflow: 'workflow.publish',
@@ -98,6 +106,10 @@ const TOOL_OP_CLASS: Record<string, string> = {
 	update_agent_integration: 'n8n-agent.publish',
 	verify_agent_mcp_server: 'n8n-agent.publish',
 	web_act: 'web.act',
+	aon_agent_create: 'agent.write',
+	aon_agent_update: 'agent.write',
+	aon_deliverable_upsert: 'agent.write',
+	aon_agent_status: 'agent.write',
 };
 
 const UNKNOWN_TOOL_TIER = 3;

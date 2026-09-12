@@ -41,6 +41,15 @@ export class AonConfig {
 	@Env('AON_TELEGRAM_CHAT_IDS')
 	telegramChatIds: string = '';
 
+	/**
+	 * Telegram user ids (the sender, `from.id`) the channel bridge accepts as
+	 * the owner, comma-separated. Empty falls back to `telegramChatIds`: in a
+	 * private chat the chat id equals the sender's user id, so that is a safe
+	 * default; a group chat needs this set explicitly.
+	 */
+	@Env('AON_TELEGRAM_USER_IDS')
+	telegramUserIds: string = '';
+
 	/** The fenced browser (Obscura's MCP endpoint) on the host. Empty means the browser is offline, a normal state. */
 	@Env('AON_BROWSER_URL')
 	browserUrl: string = '';

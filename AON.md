@@ -15,9 +15,9 @@ part is planned rather than built, it says so.
 only during a turn the owner started (in the window, or from a channel such as
 Telegram) and only within that turn. It may use the capabilities its scope and
 Guard allow: workflows and their executions, credentials, Hands, memory, Aon
-agents and n8n agents. It can create, change, run, review and retire
-workflows now; creating, changing and reviewing agents comes with the
-executor. It is not an agent (it never acts on its own) and not a workflow
+agents and n8n agents; the browser and the voice sidecar; its skills. It can
+create, change, run, review and retire workflows and agents alike, each
+effect passing Guard. It is not an agent (it never acts on its own) and not a workflow
 (it reasons).
 
 **Agent** (an Aon agent). A script that executes one bounded charter for the
@@ -37,9 +37,8 @@ combination of
 An agent is registered in Aon's runtime and produces *runs*. It may create,
 change, run, review and retire workflows, as means to its deliverables, and
 may ask for other agents. An agent is never a workflow, and a workflow is
-never an agent. Note: the runtime that starts runs inside this instance (the
-executor) is planned; the roster, deliverables, past runs and learned rules
-are here now.
+never an agent. Agents are authored by the owner on their page or by the
+assistant through its tools (an agent may propose one, behind a card).
 
 **n8n agent.** n8n's own first-class agent product, the "Agents · Preview"
 module: it can run through its Preview chat, integrations, scheduled tasks or
@@ -57,25 +56,30 @@ judgement; any reasoning belongs to an actor it invokes. Built by the owner,
 the assistant or an agent. It lives in n8n; its effectful nodes answer to
 Guard like every other effect.
 
-**Routine.** A workflow whose only job is to invoke an Aon agent on a
-schedule (Schedule Trigger → Aon node → the agent). A deliverable declares its
-cadence and one routine implements it. A routine never invokes the assistant,
-holds no rules of its own, and an n8n agent's scheduled task is not a routine.
-Planned with the executor.
+**Routine.** A deliverable's cadence, kept by the executor: a `recurring`
+deliverable carries a cron expression, the executor computes its next due
+time from the last run and queues a run for its agent when it is due, and a
+stopped, failed or denied run waits for the next cadence rather than
+retrying at once. A routine has no rules of its own and never invokes the
+assistant. (A workflow may also start an agent's run through the MCP tools;
+that is a workflow using an agent, not a routine.) Built.
 
 **Channel bridge.** A workflow that authenticates one message from the owner
 on a channel (Telegram, and later others), relays it to the assistant as an
 owner-initiated turn, and relays the reply back. It never reasons, and a
 scheduled or third-party message never passes through it as if the owner
-had spoken. Planned.
+had spoken: the bridge checks both the chat and the sender against the
+owner's ids. Voice notes travel the same way (heard and answered through
+the voice sidecar). Built for Telegram.
 
 **Executor.** The non-reasoning runtime that claims a run from one charter
-version, starts it, records it and asks the judge for the verdict. Planned.
+version, starts it, records it, asks the judge for the verdict, keeps the
+routines, the breaker and the budget. Built.
 
 **Judge.** The actor a deliverable names to decide whether its definition of
 done is met: the owner, or a model call the executor makes on the
-deliverable's behalf. A judge decides; it never acts. Planned with the
-executor.
+deliverable's behalf, always a different model than the maker. A judge
+decides; it never acts. Built.
 
 **Graph.** The shape of an automation whose steps have dependencies: each
 step runs once, branches fork on a condition and merge back, and the whole
@@ -113,16 +117,21 @@ spends money or grants access.
 **Guard.** The permission system: every effect is classed, the class has a
 tier, the tier has a policy, and what the policy does not allow goes to the
 approver — the owner — as a card. Guard checks the concrete call before it
-executes, for the assistant, for agents, for workflows' effectful nodes and
-for Hands alike. This is the target invariant; today the MCP server enforces
-authentication and scopes and Hands runs what it is given, and Guard itself
-is the next module.
+executes, for the assistant, for agents, for the browser and for Hands; an
+approved card authorizes exactly one retry of the call it was raised for.
+Built (`aon-core/guard`): sixteen-plus effect classes in tiers 0–4, policies
+per identity, cards with a day's expiry, an audit trail, cards relayed to
+Telegram. Not yet under Guard: the effectful nodes of workflows, which run
+with their own credentials as n8n always did; that is the remaining gap
+between today and the invariant.
 
 **Memory.** What Aon has read: captured sources → chunks (searched by word and
 by meaning) → facts and entities (extracted). Capture and extraction are its
 only writers; actors ask for a capture, they never write records directly.
 Memory keeps the evidence a learned rule came from; the rule belongs to its
-agent. Search is here now; capture and extraction are next.
+agent. Search, capture and extraction (a small model, every minute, within
+its own monthly budget; every fact it proposes is pending until the owner
+confirms or rejects it) are built.
 
 **Hands.** The fenced workspace where commands run and files live, for the
 assistant and for agents (and, through the same service, for n8n agents).
@@ -172,11 +181,11 @@ authorizes publication; an approved actor may carry it out.
 
 | Part | Backend | Pages | State |
 |---|---|---|---|
-| Assistant, Hands, config | `packages/cli/src/modules/aon-core` | the window (built); Settings › Aon (built: persona, model, budget, skills, parts) | built |
-| Agents, deliverables, runs, rules | `packages/cli/src/modules/aon-agents` | `/aon/agents`, `/aon/agents/:slug` | read-only now; executor, judge, routines, channel bridge planned |
-| Guard | `packages/cli/src/modules/aon-guard` | Guard page, cards | planned |
-| Memory | `packages/cli/src/modules/aon-memory` | search on `/aon` (built); a Memory page (planned) | search built; capture, extraction planned |
-| Hands service | `/root/aon-hands` on the host (n8n sandbox protocol) | — | built |
-| Browser | `packages/cli/src/modules/aon-core/browser`; `aon-browser` (Obscura) on the host | Browser status on `/aon` (planned) | built |
-| Voice | `packages/cli/src/modules/aon-core/voice`; `aon-voice` on the host | mic + read-aloud in the window | built |
+| Assistant, threads, channel bridge, Hands client, browser, voice, settings | `packages/cli/src/modules/aon-core` | the window; `/aon` (Home), `/aon/hands`, `/aon/settings` | built |
+| Guard | `packages/cli/src/modules/aon-core/guard` | `/aon/guard`, cards on Telegram | built; workflow nodes not yet gated |
+| Agents, deliverables, runs, rules, executor, judge, routines | `packages/cli/src/modules/aon-agents` | `/aon/agents`, `/aon/agents/new`, `/aon/agents/:slug`, `/aon/runs` | built |
+| Memory: sources, chunks, capture, extraction, entities, facts, observations, graph | `packages/cli/src/modules/aon-memory` | `/aon/memory` (search, capture, Sky / Brain / Radial, entities, facts, observations) | built |
+| Skills | `aon-skills/` (canonical) → the CLI home's `.claude/skills` | Settings › Aon (on/off) | built; the owner picks what is added |
+| Hands service | `/root/aon-hands` on the host (n8n sandbox protocol, allowlist proxy) | — | built |
+| Browser and voice sidecars | `aon-browser` (Obscura) and `aon-voice` on the host | — | built |
 | Workflows, executions, n8n agents, credentials | n8n itself | n8n's own pages | stock |

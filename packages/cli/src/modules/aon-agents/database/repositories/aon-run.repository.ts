@@ -199,6 +199,17 @@ export class AonRunRepository extends Repository<AonRun> {
 		return rows[0]?.exists ?? false;
 	}
 
+	async hasInFlightForAgent(agentId: string): Promise<boolean> {
+		const rows = await this.manager.query<Array<{ exists: boolean }>>(
+			`SELECT EXISTS (
+				SELECT 1 FROM ${this.table(AonRun)}
+				WHERE agent_id = $1 AND status IN ('queued', 'working', 'validating', 'waiting_approval')
+			) AS exists`,
+			[agentId],
+		);
+		return rows[0]?.exists ?? false;
+	}
+
 	/** This month's spend for one agent, at list price, in euros. */
 	async sumCostEurThisMonth(agentId: string): Promise<number> {
 		const rows = await this.manager.query<Array<{ sum: number | null }>>(

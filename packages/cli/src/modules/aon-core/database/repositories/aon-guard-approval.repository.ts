@@ -2,7 +2,7 @@ import type { AonGuardApproval as AonGuardApprovalApi } from '@n8n/api-types';
 import { Service } from '@n8n/di';
 
 import { returningRows } from '../returning-rows';
-import { DataSource, Repository } from '@n8n/typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from '@n8n/typeorm';
 import { randomUUID } from 'node:crypto';
 
 import { AonGuardApproval } from '../entities/aon-guard-approval.entity';
@@ -22,7 +22,7 @@ interface ApprovalRow {
 	createdAt: Date;
 }
 
-const STATUSES: readonly string[] = ['pending', 'approved', 'denied', 'expired'];
+const STATUSES: readonly string[] = ['pending', 'approved', 'denied', 'expired', 'used'];
 
 function isStatus(value: string): value is AonGuardApprovalApi['status'] {
 	return STATUSES.includes(value);
@@ -115,6 +115,33 @@ export class AonGuardApprovalRepository extends Repository<AonGuardApproval> {
 		const result = await this.update({ id, status: 'pending' }, { status, decidedBy, decidedAt: new Date() });
 		if (result.affected !== 1) return null;
 		return await this.findById(id);
+	}
+
+	/**
+	 * An approved card matching this identity, op class and run (a caller
+	 * with no run, such as the owner, matches only a card raised with none
+	 * too) that nothing has relied on yet, and whose 24h window has not
+	 * passed. `decide()` checks this before its policy lookup, so the one
+	 * retried call an approval authorizes does not ask again.
+	 */
+	async findApprovedUnused(identity: string, opClass: string, runId: string | null): Promise<AonGuardApprovalApi | null> {
+		const row = await this.findOne({
+			where: {
+				identity,
+				opClass,
+				status: 'approved',
+				runId: runId ?? IsNull(),
+				expiresAt: MoreThan(new Date()),
+			},
+			order: { createdAt: 'DESC' },
+		});
+		return row ? toApproval(row) : null;
+	}
+
+	/** Marks an approved card spent. A no-op (returns false) once it is no longer `approved`. */
+	async markUsed(id: string): Promise<boolean> {
+		const result = await this.update({ id, status: 'approved' }, { status: 'used' });
+		return result.affected === 1;
 	}
 
 	/** Pending cards whose deadline passed: marks them expired and hands back what changed. */

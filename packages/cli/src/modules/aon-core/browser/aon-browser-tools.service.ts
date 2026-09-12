@@ -159,8 +159,9 @@ export class McpAonBrowserToolsService {
 					const lines = result.steps.map(
 						(s, i) => `${i + 1}. ${s.kind}: ${s.ok ? s.text ?? '(image captured)' : `failed — ${s.error}`}`,
 					);
+					const pageNow = result.snapshot ?? `(no snapshot: ${result.error ?? 'unknown error'})`;
 					const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-						{ type: 'text', text: clip(`${lines.join('\n')}\n\n--- page now ---\n${result.snapshot}`) },
+						{ type: 'text', text: clip(`${lines.join('\n')}\n\n--- page now ---\n${pageNow}`) },
 					];
 					if (result.screenshot) content.push({ type: 'image', data: result.screenshot.data, mimeType: result.screenshot.mimeType });
 					return { content };

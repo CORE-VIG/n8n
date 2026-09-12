@@ -37,7 +37,7 @@ export interface AonGuardApproval {
 	summary: string;
 	body: Record<string, unknown> | null;
 	runId: string | null;
-	status: 'pending' | 'approved' | 'denied' | 'expired';
+	status: 'pending' | 'approved' | 'denied' | 'expired' | 'used';
 	decidedBy: string | null;
 	decidedAt: string | null;
 	expiresAt: string;

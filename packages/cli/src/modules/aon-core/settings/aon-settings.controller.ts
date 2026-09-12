@@ -14,6 +14,7 @@ const putSettingsBody = z
 		persona: z.string().trim().max(4000).optional(),
 		talkModel: z.string().min(1).max(200).optional(),
 		budgetEurMonth: z.number().min(0).max(1000).optional(),
+		extractBudgetEurMonth: z.number().min(0).max(200).optional(),
 	})
 	.strict();
 

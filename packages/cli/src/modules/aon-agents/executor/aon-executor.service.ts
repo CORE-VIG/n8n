@@ -3,7 +3,7 @@ import { Logger } from '@n8n/backend-common';
 import { GlobalConfig } from '@n8n/config';
 import { Service } from '@n8n/di';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { AonGuardService } from '@/modules/aon-core/guard/aon-guard.service';
@@ -44,6 +44,9 @@ const HEARTBEAT_MS = 30_000;
 const MAKER_TIMEOUT_MS = 30 * 60_000;
 const JUDGE_TIMEOUT_MS = 5 * 60_000;
 const CLAIM_SCAN_LIMIT = 25;
+/** A run's MCP config file (it carries the owner's bearer token) is swept at startup once it is this old. */
+const MCP_CONFIG_MAX_AGE_MS = 60 * 60_000;
+const MCP_CONFIG_RE = /^aon-mcp-run-.+\.json$/;
 
 interface InFlight {
 	runId: string;
@@ -87,6 +90,7 @@ export class AonExecutorService {
 
 	start(): void {
 		this.started = true;
+		void this.sweepStaleMcpConfigs();
 		setInterval(() => void this.tick(), TICK_MS).unref();
 		void this.tick();
 	}
@@ -252,6 +256,9 @@ export class AonExecutorService {
 			KNOWN_TOOL_NAMES,
 		);
 		const extra = KNOWN_TOOL_NAMES.filter((name) => opClassOfTool(name).opClass === approval.opClass);
+		// hands_run's class depends on its args (network: true), so the static
+		// sweep above never matches it against hands.network; add it back by hand.
+		if (approval.opClass === 'hands.network' && !extra.includes('hands_run')) extra.push('hands_run');
 		const allowedTools = Array.from(new Set([...previous, ...extra]));
 		const prompt = `The owner approved: ${approval.summary}. Continue and finish the deliverable; write it as your final message.`;
 		await this.execute(run, agent, deliverable, charter, { prompt, allowedTools, resumeSessionId: sessionId });
@@ -402,6 +409,7 @@ export class AonExecutorService {
 		} finally {
 			clearInterval(heartbeat);
 			if (this.current?.runId === run.id) this.current = null;
+			await this.deleteRunMcpConfig(run.id);
 		}
 	}
 
@@ -426,7 +434,6 @@ export class AonExecutorService {
 
 		if (result.status === 'done') {
 			await this.runs.setDone(run.id, { output: result.output, verification: result.verification });
-			await this.deliverables.update({ id: run.deliverableId }, { lastRunAt: new Date(), updatedAt: new Date() });
 			await this.events.append(run.id, { type: 'status', status: 'done' });
 		} else if (result.status === 'failed') {
 			await this.runs.setFailed(run.id, result.help);
@@ -444,6 +451,13 @@ export class AonExecutorService {
 				verification: result.verification,
 			});
 			await this.events.append(run.id, { type: 'status', status: 'waiting_approval' });
+		}
+
+		// A routine's next due time is computed from lastRunAt: every terminal
+		// outcome (not waiting_approval, which is still in flight) must set it,
+		// or a stopped/denied/failed routine gets re-queued every tick.
+		if (result.status !== 'waiting_approval') {
+			await this.deliverables.update({ id: run.deliverableId }, { lastRunAt: new Date(), updatedAt: new Date() });
 		}
 
 		if (result.status === 'done' || result.status === 'failed' || result.status === 'needs_help') {
@@ -526,6 +540,11 @@ export class AonExecutorService {
 		].join('\n');
 	}
 
+	/** Where a run's MCP config lives, whether writing it or cleaning it up. */
+	private mcpConfigPathFor(runId: string): string {
+		return path.join(this.config.aon.claudeHome, `aon-mcp-run-${runId}.json`);
+	}
+
 	/** The MCP config a run's own claude child reads: the owner's key, tagged with who is calling. */
 	private async writeRunMcpConfig(runId: string, agentSlug: string): Promise<string> {
 		const owner = await this.ownership.getInstanceOwner();
@@ -533,7 +552,7 @@ export class AonExecutorService {
 			(await this.mcpApiKeys.findServerApiKeyForUser(owner, { redact: false })) ??
 			(await this.mcpApiKeys.createMcpServerApiKey(owner));
 		await mkdir(this.config.aon.claudeHome, { recursive: true });
-		const file = path.join(this.config.aon.claudeHome, `aon-mcp-run-${runId}.json`);
+		const file = this.mcpConfigPathFor(runId);
 		const body = {
 			mcpServers: {
 				n8n: {
@@ -550,5 +569,45 @@ export class AonExecutorService {
 		await writeFile(file, JSON.stringify(body), { mode: 0o600 });
 		await chmod(file, 0o600);
 		return file;
+	}
+
+	/**
+	 * Removes a finished run's MCP config: it carries the owner's bearer
+	 * token and must not outlive the run. Best-effort — a run that never
+	 * wrote one (it failed before `writeRunMcpConfig`) has nothing to remove.
+	 */
+	private async deleteRunMcpConfig(runId: string): Promise<void> {
+		try {
+			await rm(this.mcpConfigPathFor(runId), { force: true });
+		} catch (e) {
+			this.logger.warn(`[aon] could not remove run ${runId}'s MCP config: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	/**
+	 * Catches whatever a crash or a restart left behind: any run's MCP
+	 * config file — each one holding the owner's bearer token — older than
+	 * an hour. Runs once at startup; a live run rewrites its own file every
+	 * time it resumes, so nothing in-flight is at risk of being swept.
+	 */
+	private async sweepStaleMcpConfigs(): Promise<void> {
+		const dir = this.config.aon.claudeHome;
+		let entries: string[];
+		try {
+			entries = await readdir(dir);
+		} catch {
+			return; // nothing written yet
+		}
+		const cutoff = Date.now() - MCP_CONFIG_MAX_AGE_MS;
+		for (const entry of entries) {
+			if (!MCP_CONFIG_RE.test(entry)) continue;
+			const file = path.join(dir, entry);
+			try {
+				const info = await stat(file);
+				if (info.mtimeMs < cutoff) await rm(file, { force: true });
+			} catch (e) {
+				this.logger.warn(`[aon] could not sweep ${entry}: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		}
 	}
 }

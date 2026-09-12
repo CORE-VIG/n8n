@@ -1,12 +1,17 @@
-import type { AonDeliverableSummary, AonRunSummary } from '@n8n/api-types';
+import type { AonDeliverableSummary, AonGuardIdentity, AonRunSummary } from '@n8n/api-types';
 import type { User } from '@n8n/db';
 import { Service } from '@n8n/di';
 import z from 'zod';
 
 import { isAonOwner } from '@/modules/aon-core/aon-owner';
+import { AonGuardService } from '@/modules/aon-core/guard/aon-guard.service';
+import { AON_OP_CLASSES, DEFAULT_AGENT_TIER_CEILING } from '@/modules/aon-core/guard/op-classes';
+import { identityFromRequest } from '@/modules/aon-core/guard/request-identity';
 import type { RegisterToolFn, ToolDefinition } from '@/modules/mcp/mcp.types';
 
+import type { AgentAuthoringCaller } from './aon-agent-authoring.service';
 import { AonAgentAuthoringService } from './aon-agent-authoring.service';
+import { charterView } from './charter-view';
 import { AonAgentRepository } from './database/repositories/aon-agent.repository';
 import { AonRunRepository } from './database/repositories/aon-run.repository';
 
@@ -125,7 +130,42 @@ export class McpAonAgentsToolsService {
 		private readonly agents: AonAgentRepository,
 		private readonly runs: AonRunRepository,
 		private readonly authoring: AonAgentAuthoringService,
+		private readonly guard: AonGuardService,
 	) {}
+
+	/** The identity's own tier ceiling, for capping what it may hand a charter it authors. */
+	private async callerContext(identity: AonGuardIdentity): Promise<AgentAuthoringCaller> {
+		if (identity.kind === 'owner') return { kind: 'owner' };
+		const agent = await this.agents.findOneBy({ slug: identity.name });
+		const tierCeiling = agent
+			? (charterView(agent.charter, agent.persona).guard.tierCeiling ?? DEFAULT_AGENT_TIER_CEILING)
+			: DEFAULT_AGENT_TIER_CEILING;
+		return { kind: 'agent', tierCeiling };
+	}
+
+	private guardLabel(opClass: string): string {
+		return AON_OP_CLASSES.find((c) => c.opClass === opClass)?.label ?? opClass;
+	}
+
+	/** Guard's verdict for one call: `deny` returns a refusal, `ask` raises a card and returns the stop-and-wait text; `allow` records and returns null so the handler proceeds. */
+	private async guarded(
+		identity: AonGuardIdentity,
+		toolName: string,
+		args: Record<string, unknown>,
+		summary: string,
+	): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean } | null> {
+		const decision = await this.guard.decideTool(identity, toolName, args);
+		if (decision.verdict === 'deny') {
+			await this.guard.record(identity, decision.opClass, 'deny', args);
+			return { content: [{ type: 'text', text: `Guard denies this: ${this.guardLabel(decision.opClass)}` }], isError: true };
+		}
+		if (decision.verdict === 'ask') {
+			const approval = await this.guard.requestApproval(identity, decision.opClass, summary, args);
+			return text(`Guard needs the owner's yes: card ${approval.id} raised. Stop now and wait.`);
+		}
+		await this.guard.record(identity, decision.opClass, 'allow', args);
+		return null;
+	}
 
 	registerTools(registerIfAllowed: RegisterToolFn, user: User) {
 		if (!isAonOwner(user)) return;
@@ -137,8 +177,11 @@ export class McpAonAgentsToolsService {
 				inputSchema: agentsSchema,
 				annotations: { title: 'List Aon agents', readOnlyHint: true },
 			},
-			handler: async () => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_agents', args, 'List the agent roster.');
+					if (blocked) return blocked;
 					const roster = await this.agents.listRoster();
 					if (roster.length === 0) return text('No agents yet.');
 					const lines = roster.map(
@@ -159,8 +202,11 @@ export class McpAonAgentsToolsService {
 				inputSchema: agentSchema,
 				annotations: { title: 'Read an Aon agent', readOnlyHint: true },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_agent', args, `Read agent: ${args.slug}.`);
+					if (blocked) return blocked;
 					const detail = await this.authoring.getDetail(args.slug);
 					const c = detail.charter;
 					const sections = [
@@ -195,11 +241,16 @@ export class McpAonAgentsToolsService {
 				inputSchema: agentCreateSchema,
 				annotations: { title: 'Create an Aon agent', readOnlyHint: false, destructiveHint: false },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_agent_create', args, `Create agent: ${args.slug}.`);
+					if (blocked) return blocked;
+					const caller = await this.callerContext(identity);
 					const detail = await this.authoring.createAgent(
 						{ slug: args.slug, name: args.name, persona: args.persona, charter: args.charter },
 						user.email,
+						caller,
 					);
 					for (const d of args.deliverables ?? []) {
 						await this.authoring.createDeliverable(args.slug, d);
@@ -221,13 +272,21 @@ export class McpAonAgentsToolsService {
 				inputSchema: agentUpdateSchema,
 				annotations: { title: 'Update an Aon agent', readOnlyHint: false, destructiveHint: false },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
-					const detail = await this.authoring.updateCharter(args.slug, {
-						name: args.name,
-						persona: args.persona,
-						charter: args.charter,
-					});
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_agent_update', args, `Update agent: ${args.slug}.`);
+					if (blocked) return blocked;
+					const caller = await this.callerContext(identity);
+					const detail = await this.authoring.updateCharter(
+						args.slug,
+						{
+							name: args.name,
+							persona: args.persona,
+							charter: args.charter,
+						},
+						caller,
+					);
 					return text(`Updated ${detail.name} (${detail.slug}).`);
 				} catch (error) {
 					return failure(error);
@@ -242,8 +301,16 @@ export class McpAonAgentsToolsService {
 				inputSchema: deliverableUpsertSchema,
 				annotations: { title: 'Create or change a deliverable', readOnlyHint: false, destructiveHint: false },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(
+						identity,
+						'aon_deliverable_upsert',
+						args,
+						`${args.id ? 'Update' : 'Create'} deliverable for ${args.agent}: ${args.name}.`,
+					);
+					if (blocked) return blocked;
 					const d = await this.authoring.upsertDeliverable(args.agent, args.id, {
 						name: args.name,
 						dod: args.dod,
@@ -267,8 +334,11 @@ export class McpAonAgentsToolsService {
 				inputSchema: agentStatusSchema,
 				annotations: { title: 'Set an Aon agent status', readOnlyHint: false, destructiveHint: false },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_agent_status', args, `Set ${args.slug} to ${args.status}.`);
+					if (blocked) return blocked;
 					await this.authoring.setStatus(args.slug, args.status);
 					return text(`${args.slug} is now ${args.status}.`);
 				} catch (error) {
@@ -284,8 +354,16 @@ export class McpAonAgentsToolsService {
 				inputSchema: runStartSchema,
 				annotations: { title: 'Start an Aon run', readOnlyHint: false, destructiveHint: false },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(
+						identity,
+						'aon_run_start',
+						args,
+						`Start run: ${args.agent} / ${args.deliverable}.`,
+					);
+					if (blocked) return blocked;
 					const run = await this.authoring.startRun(args.agent, args.deliverable, args.input, 'owner');
 					return text(`Queued run ${run.id} for ${run.agentSlug ?? args.agent} / ${run.deliverableName ?? args.deliverable}.`);
 				} catch (error) {
@@ -301,8 +379,11 @@ export class McpAonAgentsToolsService {
 				inputSchema: runsSchema,
 				annotations: { title: 'List Aon runs', readOnlyHint: true },
 			},
-			handler: async (args) => {
+			handler: async (args, extra) => {
 				try {
+					const identity = identityFromRequest(extra, user);
+					const blocked = await this.guarded(identity, 'aon_runs', args, 'List recent runs.');
+					if (blocked) return blocked;
 					const agentId = args.agent ? (await this.agents.findRosterBySlug(args.agent))?.id : undefined;
 					if (args.agent && !agentId) return text(`There is no agent called ${args.agent}.`);
 					const { items } = await this.runs.list({ agentId, status: args.status, limit: args.limit ?? 20, offset: 0 });

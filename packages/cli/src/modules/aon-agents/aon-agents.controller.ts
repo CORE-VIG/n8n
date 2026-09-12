@@ -150,6 +150,7 @@ export class AonAgentsController {
 		return await this.authoring.createAgent(
 			{ slug: parsed.data.slug, name: parsed.data.name, persona: parsed.data.persona, charter: parsed.data.charter },
 			req.user.email,
+			{ kind: 'owner' },
 		);
 	}
 
@@ -163,7 +164,7 @@ export class AonAgentsController {
 		if (!parsed.success) {
 			throw new BadRequestError(parsed.error.issues.map((issue) => issue.message).join('; '));
 		}
-		return await this.authoring.updateCharter(slug, parsed.data);
+		return await this.authoring.updateCharter(slug, parsed.data, { kind: 'owner' });
 	}
 
 	@Post('/:slug/deliverables')
@@ -201,6 +202,12 @@ export class AonAgentsController {
 		@Param('id') id: string,
 	): Promise<{ deleted: true }> {
 		await this.authoring.deleteDeliverable(slug, id);
+		return { deleted: true };
+	}
+
+	@Delete('/:slug')
+	async deleteAgent(_req: AuthenticatedRequest, _res: unknown, @Param('slug') slug: string): Promise<{ deleted: true }> {
+		await this.authoring.deleteAgent(slug);
 		return { deleted: true };
 	}
 

@@ -4,6 +4,7 @@ import { GlobalConfig } from '@n8n/config';
 import { SettingsRepository } from '@n8n/db';
 import { Container, Service } from '@n8n/di';
 import { jsonParse } from 'n8n-workflow';
+import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -16,7 +17,11 @@ import { AonHandsService } from '../hands/aon-hands.service';
 const KEY_PERSONA = 'aon.persona';
 const KEY_TALK_MODEL = 'aon.talkModel';
 const KEY_BUDGET = 'aon.budgetEurMonth';
+const KEY_EXTRACT_BUDGET = 'aon.extractBudgetEurMonth';
 const KEY_DISABLED_SKILLS = 'aon.skills.disabled';
+const KEY_GUARD_CARD_SECRET = 'aon.guardCardSecret';
+/** `aon.extractSpentEur.<YYYY-MM>`: this month's counter, one row per month. */
+const EXTRACT_SPENT_PREFIX = 'aon.extractSpentEur.';
 
 /** The persona paragraph the assistant's system prompt used to hard-code; still the default until the owner changes it. */
 export const DEFAULT_PERSONA =
@@ -26,6 +31,8 @@ export const DEFAULT_PERSONA =
 export const AON_MODEL_BANDS = ['haiku', 'sonnet', 'opus'] as const; // the CLI's aliases: always the current model of each band
 
 export const DEFAULT_BUDGET_EUR_MONTH = 25;
+
+export const DEFAULT_EXTRACT_BUDGET_EUR_MONTH = 5;
 
 /** The fork's own skills: always on disk, never uninstalled, shown with a "built in" badge. */
 const BUILT_IN_SKILLS = new Set(['loop-vs-graph', 'aon-memory', 'n8n-workflow-quality']);
@@ -81,6 +88,49 @@ export class AonSettingsService {
 		return Number.isFinite(n) && n >= 0 ? n : DEFAULT_BUDGET_EUR_MONTH;
 	}
 
+	async extractBudgetEurMonth(): Promise<number> {
+		const row = await this.settingsRepository.findByKey(KEY_EXTRACT_BUDGET);
+		if (!row?.value) return DEFAULT_EXTRACT_BUDGET_EUR_MONTH;
+		const n = Number(row.value);
+		return Number.isFinite(n) && n >= 0 && n <= 200 ? n : DEFAULT_EXTRACT_BUDGET_EUR_MONTH;
+	}
+
+	/** The current calendar month's key for the extractor's spend counter, e.g. "2026-09". */
+	private extractSpendKey(when: Date = new Date()): string {
+		return `${EXTRACT_SPENT_PREFIX}${when.getUTCFullYear()}-${String(when.getUTCMonth() + 1).padStart(2, '0')}`;
+	}
+
+	/** What the extractor has spent this calendar month, in euros. */
+	async extractSpentEurThisMonth(): Promise<number> {
+		const row = await this.settingsRepository.findByKey(this.extractSpendKey());
+		if (!row?.value) return 0;
+		const n = Number(row.value);
+		return Number.isFinite(n) && n >= 0 ? n : 0;
+	}
+
+	/** Adds `costEur` to this month's extraction spend counter. Read-modify-write: the extractor ticks once a minute, never concurrently. */
+	async addExtractSpend(costEur: number): Promise<void> {
+		if (!Number.isFinite(costEur) || costEur <= 0) return;
+		const key = this.extractSpendKey();
+		const current = await this.extractSpentEurThisMonth();
+		await this.settingsRepository.upsert(
+			{ key, value: String(current + costEur), loadOnStartup: false },
+			['key'],
+		);
+	}
+
+	/** The Guard-card notifier's own secret: generated once, on first use, and never rotated automatically. */
+	async guardCardSecret(): Promise<string> {
+		const row = await this.settingsRepository.findByKey(KEY_GUARD_CARD_SECRET);
+		if (row?.value) return row.value;
+		const secret = randomBytes(32).toString('hex');
+		await this.settingsRepository.upsert(
+			{ key: KEY_GUARD_CARD_SECRET, value: secret, loadOnStartup: false },
+			['key'],
+		);
+		return secret;
+	}
+
 	/** The model band list a PUT may pick from: the three offered bands, plus whatever this instance already runs on. */
 	allowedModels(): string[] {
 		return [...AON_MODEL_BANDS, this.config.aon.talkModel];
@@ -106,6 +156,12 @@ export class AonSettingsService {
 		if (input.budgetEurMonth !== undefined) {
 			await this.settingsRepository.upsert(
 				{ key: KEY_BUDGET, value: String(input.budgetEurMonth), loadOnStartup: false },
+				['key'],
+			);
+		}
+		if (input.extractBudgetEurMonth !== undefined) {
+			await this.settingsRepository.upsert(
+				{ key: KEY_EXTRACT_BUDGET, value: String(input.extractBudgetEurMonth), loadOnStartup: false },
 				['key'],
 			);
 		}
@@ -207,10 +263,11 @@ export class AonSettingsService {
 			.split(',')
 			.map((id) => id.trim())
 			.filter(Boolean);
-		const [model, handsConfigured, executorRunning] = await Promise.all([
+		const [model, handsConfigured, executorRunning, extractSpentEur] = await Promise.all([
 			this.talkModel(),
 			this.hands.isConfigured(),
 			this.executorRunning(),
+			this.extractSpentEurThisMonth(),
 		]);
 		return {
 			assistant: { model, signedIn: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) },
@@ -219,6 +276,7 @@ export class AonSettingsService {
 			memory: {
 				ollamaHost: this.config.aon.ollamaUrl ? hostOnly(this.config.aon.ollamaUrl) : null,
 				embedModel: this.config.aon.embedModel,
+				extractSpentEur,
 			},
 			executor: { running: executorRunning },
 			guard: { tierCeilingDefault: DEFAULT_AGENT_TIER_CEILING },
@@ -239,13 +297,14 @@ export class AonSettingsService {
 	}
 
 	async view(): Promise<AonSettingsView> {
-		const [persona, talkModel, budgetEurMonth, skills, parts] = await Promise.all([
+		const [persona, talkModel, budgetEurMonth, extractBudgetEurMonth, skills, parts] = await Promise.all([
 			this.persona(),
 			this.talkModel(),
 			this.budgetEurMonth(),
+			this.extractBudgetEurMonth(),
 			this.listSkills(),
 			this.parts(),
 		]);
-		return { persona, talkModel, budgetEurMonth, skills, parts };
+		return { persona, talkModel, budgetEurMonth, extractBudgetEurMonth, skills, parts };
 	}
 }

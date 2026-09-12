@@ -8734,6 +8734,7 @@
 	"aon.settings.model.opus.note": "Slowest and most expensive. Best for hard problems.",
 	"aon.settings.budget.title": "Monthly budget",
 	"aon.settings.budget.lede": "What Aon may spend in a month, at list price. An agent with its own budget uses that instead; the rest share this one.",
+	"aon.settings.extractBudget": "Extraction budget (€/month)",
 	"aon.settings.save": "Save",
 	"aon.settings.saved": "Saved",
 	"aon.settings.saveFailed": "Could not save: {message}",

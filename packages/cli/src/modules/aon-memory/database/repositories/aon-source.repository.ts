@@ -32,6 +32,21 @@ interface SourceDetailRow extends SourceRow {
 	extractedAt: Date | null;
 }
 
+/** One source the extractor may still read: never extracted, indexed, ready for a model turn. */
+export interface AonUnextractedSourceRow {
+	id: string;
+	title: string;
+	origin: string;
+	kind: string;
+	content: string;
+	docTime: Date | null;
+}
+
+export interface AonSourceKindCount {
+	kind: string;
+	count: number;
+}
+
 interface ChunkRow {
 	id: string;
 	seq: number;
@@ -214,5 +229,55 @@ export class AonSourceRepository extends Repository<AonSource> {
 	/** Its chunks cascade at the database level. */
 	async deleteById(id: string): Promise<void> {
 		await this.delete({ id });
+	}
+
+	// --- the extractor's own reads and writes ---------------------------------
+	// AonExtractService reasons about which sources to read and what it found;
+	// it never touches TypeORM directly, so every query it needs lives here.
+
+	/** The extractor's own candidates: never extracted, indexed, newest first. */
+	async listUnextracted(limit: number): Promise<AonUnextractedSourceRow[]> {
+		return await this.manager.query<AonUnextractedSourceRow[]>(
+			`SELECT id, title, origin, kind, content, doc_time AS "docTime"
+			FROM ${this.table}
+			WHERE extracted_at IS NULL AND status = 'indexed'
+			ORDER BY created_at DESC
+			LIMIT $1`,
+			[limit],
+		);
+	}
+
+	/** The first chunk of a source, in reading order: what a fact extracted from it cites as its evidence. */
+	async firstChunkId(sourceId: string): Promise<string | null> {
+		const rows = await this.manager.query<Array<{ id: string }>>(
+			`SELECT id FROM ${this.chunksTable} WHERE source_id = $1 ORDER BY seq ASC LIMIT 1`,
+			[sourceId],
+		);
+		return rows[0]?.id ?? null;
+	}
+
+	/** Marks a source read without extracting from it (too long, budget exhausted, …), with a note for why. */
+	async markSkipped(id: string, note: string): Promise<void> {
+		await this.manager.query(
+			`UPDATE ${this.table} SET extracted_at = CURRENT_TIMESTAMP,
+				meta = COALESCE(meta, '{}'::jsonb) || $2::jsonb
+			WHERE id = $1`,
+			[id, JSON.stringify({ extractSkipped: note })],
+		);
+	}
+
+	async markExtracted(id: string): Promise<void> {
+		await this.manager.query(`UPDATE ${this.table} SET extracted_at = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
+	}
+
+	/** Sources grouped by kind, most common first: the Memory page's "sky" categories. */
+	async countByKind(): Promise<AonSourceKindCount[]> {
+		const rows = await this.createQueryBuilder('s')
+			.select('s.kind', 'kind')
+			.addSelect('COUNT(*)::int', 'count')
+			.groupBy('s.kind')
+			.orderBy('count', 'DESC')
+			.getRawMany<{ kind: string; count: number | string }>();
+		return rows.map((r) => ({ kind: r.kind, count: Number(r.count) }));
 	}
 }

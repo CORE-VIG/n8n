@@ -45,9 +45,30 @@ export class AonGuardService {
 		private readonly cards: AonGuardCardsService,
 	) {}
 
-	/** The verdict for one op class, for this identity: a policy row, else the tier default. */
-	async decide(identity: AonGuardIdentity, opClass: string): Promise<GuardDecision> {
+	/**
+	 * The verdict for one op class, for this identity: an approved card
+	 * already covers it, else a policy row, else the tier default.
+	 *
+	 * `consumeApproval` (default true) marks a matching card used once it is
+	 * relied on. `allowedTools` passes false: it sweeps every known tool name
+	 * to build a harness allow-list, and must not spend the one real card a
+	 * retried call still needs on that sweep.
+	 */
+	async decide(
+		identity: AonGuardIdentity,
+		opClass: string,
+		options?: { consumeApproval?: boolean },
+	): Promise<GuardDecision> {
 		const tier = tierOf(opClass);
+		const approved = await this.approvalRepository.findApprovedUnused(
+			identityKey(identity),
+			opClass,
+			identity.runId ?? null,
+		);
+		if (approved) {
+			if (options?.consumeApproval ?? true) await this.approvalRepository.markUsed(approved.id);
+			return { verdict: 'allow', opClass, tier, source: `approved card ${approved.id}` };
+		}
 		const candidates = candidateIdentities(identity);
 		const rows = await this.policyRepository.findFor(candidates);
 		for (const key of candidates) {
@@ -62,16 +83,18 @@ export class AonGuardService {
 		identity: AonGuardIdentity,
 		toolName: string,
 		args?: Record<string, unknown>,
+		options?: { consumeApproval?: boolean },
 	): Promise<GuardDecision> {
 		const { opClass } = opClassOfTool(toolName, args);
-		return await this.decide(identity, opClass);
+		return await this.decide(identity, opClass, options);
 	}
 
-	/** Of these tool names, the ones this identity may call without asking. */
+	/** Of these tool names, the ones this identity may call without asking. Never spends an approved card. */
 	async allowedTools(identity: AonGuardIdentity, toolNames: readonly string[]): Promise<string[]> {
 		const allowed: string[] = [];
 		for (const name of toolNames) {
-			if ((await this.decideTool(identity, name)).verdict === 'allow') allowed.push(name);
+			const decision = await this.decideTool(identity, name, undefined, { consumeApproval: false });
+			if (decision.verdict === 'allow') allowed.push(name);
 		}
 		return allowed;
 	}

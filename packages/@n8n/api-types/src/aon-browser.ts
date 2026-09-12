@@ -54,7 +54,10 @@ export interface AonBrowserActRequest {
 
 export interface AonBrowserActResult {
 	steps: AonBrowserStepResult[];
-	snapshot: string;
+	/** Null when the closing snapshot itself failed (e.g. the lease ran out) — the step results and screenshot below are still real. */
+	snapshot: string | null;
 	/** The last screenshot step's image, if any, surfaced for convenience. */
 	screenshot: AonBrowserScreenshot | null;
+	/** Why `snapshot` is null; null when the snapshot succeeded. */
+	error: string | null;
 }

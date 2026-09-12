@@ -8,6 +8,7 @@ import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { aonOwnerOnly } from '@/modules/aon-core/aon-owner';
 
 import { AonGuardPolicyRepository } from '../database/repositories/aon-guard-policy.repository';
+import { AonSettingsService } from '../settings/aon-settings.service';
 
 import { AonGuardService } from './aon-guard.service';
 import { AON_OP_CLASSES } from './op-classes';
@@ -30,6 +31,7 @@ export class AonGuardController {
 	constructor(
 		private readonly guard: AonGuardService,
 		private readonly policies: AonGuardPolicyRepository,
+		private readonly settings: AonSettingsService,
 	) {}
 
 	@Middleware()
@@ -40,6 +42,13 @@ export class AonGuardController {
 	@Get('/overview')
 	async overview(): Promise<AonGuardOverview> {
 		return await this.guard.overview();
+	}
+
+	/** The secret the Guard-card notifier sends as `X-Aon-Card-Secret`, so the owner can put it on the "Aon · Guard cards" workflow's webhook credential. */
+	@Get('/card-secret')
+	async cardSecret(): Promise<{ header: string; secret: string }> {
+		const secret = await this.settings.guardCardSecret();
+		return { header: 'X-Aon-Card-Secret', secret };
 	}
 
 	@Post('/approvals/:id/approve')

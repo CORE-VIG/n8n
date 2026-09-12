@@ -27,6 +27,8 @@ export interface AonSettingsPartMemory {
 	/** Host only (no path, no credentials); null when memory has no embedding server configured. */
 	ollamaHost: string | null;
 	embedModel: string;
+	/** What the extractor has spent this calendar month, in euros. */
+	extractSpentEur: number;
 }
 
 export interface AonSettingsPartExecutor {
@@ -51,6 +53,7 @@ export interface AonSettingsView {
 	persona: string;
 	talkModel: string;
 	budgetEurMonth: number;
+	extractBudgetEurMonth: number;
 	skills: AonSkillInfo[];
 	parts: AonSettingsParts;
 }
@@ -60,4 +63,5 @@ export interface AonSettingsUpdate {
 	persona?: string;
 	talkModel?: string;
 	budgetEurMonth?: number;
+	extractBudgetEurMonth?: number;
 }

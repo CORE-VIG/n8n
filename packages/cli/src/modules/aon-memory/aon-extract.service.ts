@@ -3,9 +3,13 @@ import { Service } from '@n8n/di';
 import { randomUUID } from 'node:crypto';
 
 import { AonRunnerService } from '@/modules/aon-agents/executor/aon-runner.service';
+import { costEur } from '@/modules/aon-agents/executor/run-machine';
+
+import { AonSettingsService } from '../aon-core/settings/aon-settings.service';
 
 import { AonEntityRepository } from './database/repositories/aon-entity.repository';
 import { AonFactRepository } from './database/repositories/aon-fact.repository';
+import type { AonUnextractedSourceRow } from './database/repositories/aon-source.repository';
 import { AonSourceRepository } from './database/repositories/aon-source.repository';
 
 const TICK_MS = 60_000;
@@ -16,15 +20,10 @@ const PAGE_CHAR_LIMIT = 20_000;
 const CONTENT_CHARS_TO_MODEL = 12_000;
 const EXTRACT_TIMEOUT_MS = 3 * 60_000;
 const ENTITY_KINDS = new Set(['person', 'org', 'place', 'thing', 'concept', 'document', 'event']);
+/** The budget-reached notice is worth repeating occasionally, never once a tick. */
+const BUDGET_LOG_INTERVAL_MS = 60 * 60_000;
 
-interface CandidateSource {
-	id: string;
-	title: string;
-	origin: string;
-	kind: string;
-	content: string;
-	docTime: Date | null;
-}
+type CandidateSource = AonUnextractedSourceRow;
 
 interface ExtractedEntity {
 	name: string;
@@ -136,12 +135,15 @@ function buildPrompt(source: CandidateSource): string {
 @Service()
 export class AonExtractService {
 	private running = false;
+	/** Wall-clock time of the last "budget reached" log line: once an hour, not once a tick. */
+	private lastBudgetLogAt = 0;
 
 	constructor(
 		private readonly entities: AonEntityRepository,
 		private readonly facts: AonFactRepository,
 		private readonly sources: AonSourceRepository,
 		private readonly runner: AonRunnerService,
+		private readonly settings: AonSettingsService,
 		private readonly logger: Logger,
 	) {}
 
@@ -154,21 +156,38 @@ export class AonExtractService {
 		if (!process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return;
 		this.running = true;
 		try {
-			const candidates = await this.fetchCandidates(BATCH_LIMIT);
+			const budget = await this.settings.extractBudgetEurMonth();
+			let spent = await this.settings.extractSpentEurThisMonth();
+			const candidates = await this.sources.listUnextracted(BATCH_LIMIT);
 			for (const source of candidates) {
+				if (spent >= budget) {
+					this.logBudgetReached(spent, budget);
+					break;
+				}
 				if (source.kind === 'page' && source.content.length > PAGE_CHAR_LIMIT) {
-					await this.markSkipped(source.id);
+					await this.sources.markSkipped(source.id, 'too long for extraction');
 					this.logger.info(`Aon memory extractor: skipped ${source.id} (${source.title}), too long to extract`);
 					continue;
 				}
 				const outcome = await this.extractOne(source);
 				if (outcome === 'runner-unavailable') break;
+				spent = await this.settings.extractSpentEurThisMonth();
 			}
 		} catch (e) {
 			this.logger.error(`Aon memory extractor tick failed: ${e instanceof Error ? e.message : String(e)}`);
 		} finally {
 			this.running = false;
 		}
+	}
+
+	/** Logged at most once an hour: the tick runs every minute and would otherwise repeat this every time. */
+	private logBudgetReached(spent: number, budget: number): void {
+		const now = Date.now();
+		if (now - this.lastBudgetLogAt < BUDGET_LOG_INTERVAL_MS) return;
+		this.lastBudgetLogAt = now;
+		this.logger.info(
+			`Aon memory extractor: this month's spend (€${spent.toFixed(4)}) has reached the €${budget} extraction budget; pausing until next month or a higher budget`,
+		);
 	}
 
 	private async extractOne(source: CandidateSource): Promise<'done' | 'runner-unavailable'> {
@@ -189,14 +208,18 @@ export class AonExtractService {
 			return 'runner-unavailable';
 		}
 
+		const spentEur = costEur(result.costUsd);
+		if (spentEur > 0) await this.settings.addExtractSpend(spentEur);
+
 		let inserted = 0;
 		if (!result.isError) {
 			const { entities, facts } = parseExtraction(result.text);
 			inserted = await this.applyExtraction(source, entities, facts);
 		}
-		await this.markExtracted(source.id);
+		await this.sources.markExtracted(source.id);
 		this.logger.info(
-			`Aon memory extractor: source ${source.id} (${source.title}) -> ${inserted} fact(s)` +
+			`Aon memory extractor: source ${source.id} (${source.title}) -> ${inserted} fact(s), ` +
+				`€${spentEur.toFixed(4)}` +
 				(result.isError ? `, model error: ${result.error}` : ''),
 		);
 		return 'done';
@@ -226,7 +249,7 @@ export class AonExtractService {
 			return resolved;
 		};
 
-		const firstChunkId = await this.firstChunkId(source.id);
+		const firstChunkId = await this.sources.firstChunkId(source.id);
 		const now = new Date();
 		let inserted = 0;
 
@@ -266,45 +289,5 @@ export class AonExtractService {
 		const now = new Date();
 		await this.entities.insertEntity({ id, name, kind, aliases, summary: null, createdAt: now, updatedAt: now });
 		return { id, kind };
-	}
-
-	// --- reads and writes on aon_sources / aon_chunks -----------------------
-	// AonSourceRepository (another module's file) carries none of these: read
-	// through its shared manager rather than adding to it.
-
-	private async fetchCandidates(limit: number): Promise<CandidateSource[]> {
-		const table = this.sources.manager.connection.driver.escape('aon_sources');
-		return await this.sources.manager.query<CandidateSource[]>(
-			`SELECT id, title, origin, kind, content, doc_time AS "docTime"
-			FROM ${table}
-			WHERE extracted_at IS NULL AND status = 'indexed'
-			ORDER BY created_at DESC
-			LIMIT $1`,
-			[limit],
-		);
-	}
-
-	private async firstChunkId(sourceId: string): Promise<string | null> {
-		const table = this.sources.manager.connection.driver.escape('aon_chunks');
-		const rows = await this.sources.manager.query<Array<{ id: string }>>(
-			`SELECT id FROM ${table} WHERE source_id = $1 ORDER BY seq ASC LIMIT 1`,
-			[sourceId],
-		);
-		return rows[0]?.id ?? null;
-	}
-
-	private async markSkipped(id: string): Promise<void> {
-		const table = this.sources.manager.connection.driver.escape('aon_sources');
-		await this.sources.manager.query(
-			`UPDATE ${table} SET extracted_at = CURRENT_TIMESTAMP,
-				meta = COALESCE(meta, '{}'::jsonb) || $2::jsonb
-			WHERE id = $1`,
-			[id, JSON.stringify({ extractSkipped: 'too long for extraction' })],
-		);
-	}
-
-	private async markExtracted(id: string): Promise<void> {
-		const table = this.sources.manager.connection.driver.escape('aon_sources');
-		await this.sources.manager.query(`UPDATE ${table} SET extracted_at = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
 	}
 }
