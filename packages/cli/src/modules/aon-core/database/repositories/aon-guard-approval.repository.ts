@@ -1,5 +1,7 @@
 import type { AonGuardApproval as AonGuardApprovalApi } from '@n8n/api-types';
 import { Service } from '@n8n/di';
+
+import { returningRows } from '../returning-rows';
 import { DataSource, Repository } from '@n8n/typeorm';
 import { randomUUID } from 'node:crypto';
 
@@ -117,7 +119,7 @@ export class AonGuardApprovalRepository extends Repository<AonGuardApproval> {
 
 	/** Pending cards whose deadline passed: marks them expired and hands back what changed. */
 	async expireOlderThan(now: Date): Promise<AonGuardApprovalApi[]> {
-		const rows = await this.manager.query<ApprovalRow[]>(
+		const raw: unknown = await this.manager.query(
 			`UPDATE ${this.table()} SET status = 'expired'
 			 WHERE status = 'pending' AND expires_at < $1
 			 RETURNING id, identity, op_class AS "opClass", tier, summary, body, run_id AS "runId",
@@ -125,6 +127,6 @@ export class AonGuardApprovalRepository extends Repository<AonGuardApproval> {
 				expires_at AS "expiresAt", created_at AS "createdAt"`,
 			[now],
 		);
-		return rows.map(toApproval);
+		return returningRows<ApprovalRow>(raw).map(toApproval);
 	}
 }

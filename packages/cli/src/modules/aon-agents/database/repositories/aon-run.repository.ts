@@ -1,5 +1,7 @@
 import type { AonRunDetail, AonRunSummary } from '@n8n/api-types';
 import { Service } from '@n8n/di';
+
+import { returningRows } from '@/modules/aon-core/database/returning-rows';
 import { DataSource, In, LessThan, Repository } from '@n8n/typeorm';
 
 import { AonAgent } from '../entities/aon-agent.entity';
@@ -160,7 +162,7 @@ export class AonRunRepository extends Repository<AonRun> {
 	 * than waited on. Returns null when it could not be claimed.
 	 */
 	async claimForExecution(id: string): Promise<AonRun | null> {
-		const rows = await this.manager.query<Array<{ id: string }>>(
+		const raw: unknown = await this.manager.query(
 			`UPDATE ${this.table(AonRun)}
 			SET status = 'working', claimed_by = 'executor', started_at = now(), heartbeat_at = now(), updated_at = now()
 			WHERE id = (
@@ -171,7 +173,7 @@ export class AonRunRepository extends Repository<AonRun> {
 			RETURNING id`,
 			[id],
 		);
-		const claimedId = rows[0]?.id;
+		const claimedId = returningRows<{ id: string }>(raw)[0]?.id;
 		return claimedId ? await this.findOneBy({ id: claimedId }) : null;
 	}
 
